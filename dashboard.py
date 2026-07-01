@@ -145,7 +145,7 @@ h1{font-size:15px;color:#60a5fa;letter-spacing:.5px}
 <div class="scroller">
 <table>
 <thead><tr>
-  <th>Time</th><th>Symbol</th><th>TF</th><th>Dir</th><th>Wave</th>
+  <th>Date</th><th>Time</th><th>Symbol</th><th>TF</th><th>Dir</th><th>Wave</th>
   <th>Entry</th><th>SL</th><th>SL%</th><th>RSI@entry</th>
   <th>EMA &nbsp; RSI</th><th>Volume</th><th>Ep Bars</th>
 </tr></thead>
@@ -316,6 +316,7 @@ function render(){
     document.getElementById('count').textContent = filteredCount + ' alerts';
   document.getElementById('tb').innerHTML = rows.map((a, i) => `
   <tr class="${i<3?'new':''}">
+    <td style="color:#4b5563">${a.date_ist||''}</td>
     <td>${a.time_ist}</td>
     <td><b>${a.symbol}</b></td>
     <td class="tf">${a.tf}m</td>
