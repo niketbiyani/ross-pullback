@@ -24,7 +24,8 @@ from indicators import IndicatorSet
 from strategy_engine import StrategyEngine, BarRecord, Alert
 from universe import build_universe
 from dhan_feed import bootstrap, LiveFeed
-from alert_manager import AlertManager
+from alert_manager import AlertManager, VolumeAlertManager
+from rvol import RvolTracker
 from dashboard import create_app
 
 logging.basicConfig(
@@ -42,8 +43,9 @@ def main():
             logger.error('Config: %s', e)
         sys.exit(1)
 
-    ctx       = DhanContext(Config.DHAN_CLIENT_ID, Config.DHAN_ACCESS_TOKEN)
-    alert_mgr = AlertManager()
+    ctx           = DhanContext(Config.DHAN_CLIENT_ID, Config.DHAN_ACCESS_TOKEN)
+    alert_mgr     = AlertManager()
+    vol_alert_mgr = VolumeAlertManager()
 
     # ── state stores (created lazily as new symbol-TF combos appear) ─────────
     ind_sets: dict[tuple, IndicatorSet]   = {}
@@ -72,14 +74,25 @@ def main():
         """
         Called for every closed bar (dict or Bar obj, historical or live).
         Creates state lazily, updates indicators, runs strategy engine.
-        Also accumulates today's intraday volume from 1-min bars.
+        Also accumulates today's intraday volume and drives RVOL tracking.
         """
         b      = bar if isinstance(bar, dict) else bar.__dict__
         bar_ts = b.get('ts', b.get('timestamp', 0))
 
-        # Track today's cumulative volume (1m only to avoid double-counting resampled TFs)
-        if tf == 1 and date.fromtimestamp(bar_ts) == date.today():
-            today_volumes[symbol] = today_volumes.get(symbol, 0.0) + b.get('volume', 0.0)
+        if tf == 1:
+            vol = b.get('volume', 0.0)
+            # Track today's cumulative volume (avoid double-counting resampled TFs)
+            if date.fromtimestamp(bar_ts) == date.today():
+                today_volumes[symbol] = today_volumes.get(symbol, 0.0) + vol
+            # RVOL: feed historical bars during bootstrap, score during live session
+            tracker = rvol_trackers.get(symbol)
+            if tracker is not None:
+                if not is_live:
+                    tracker.add_historical(bar_ts, vol)
+                else:
+                    spike = tracker.score(b)
+                    if spike is not None and spike.rvol >= Config.RVOL_SPIKE_THRESHOLD:
+                        vol_alert_mgr.add(spike)
 
         key = (symbol, tf)
         if key not in ind_sets:
@@ -106,7 +119,7 @@ def main():
         engines[key].update(rec)
 
     # ── dashboard (start immediately so nginx never gets 502) ─────────────────
-    app = create_app(alert_mgr)
+    app = create_app(alert_mgr, vol_alert_mgr)
     logger.info('Dashboard → http://%s:%d', Config.DASHBOARD_HOST, Config.DASHBOARD_PORT)
 
     flask_thread = threading.Thread(
@@ -131,8 +144,16 @@ def main():
     # Populate avg_volumes for relative-volume calculations on live alerts
     avg_volumes.update({s['symbol']: s.get('avg_daily_volume', 0.0) for s in symbols})
 
+    # RVOL trackers — one per symbol, fed during bootstrap, scored during live
+    rvol_trackers: dict[str, RvolTracker] = {s['symbol']: RvolTracker(s['symbol']) for s in symbols}
+
     # ── historical bootstrap ──────────────────────────────────────────────────
     bootstrap(ctx, symbols, on_bar)
+
+    # Finalize RVOL trackers: compute per-minute averages from bootstrap history
+    for t in rvol_trackers.values():
+        t.finalize()
+    logger.info('RVOL trackers ready: %d symbols', len(rvol_trackers))
 
     # Switch to live mode — now alerts are forwarded
     is_live = True

@@ -26,7 +26,7 @@ class Config:
     # Scanner
     HISTORY_DAYS: int          = int(os.getenv("HISTORY_DAYS", "5"))
     TIMEFRAMES: tuple          = (1, 3, 5, 15)
-    MAX_WORKERS: int           = int(os.getenv("MAX_WORKERS", "16"))
+    MAX_WORKERS: int           = int(os.getenv("MAX_WORKERS", "32"))
 
     # Universe filter.  Two gates — both must pass:
     #   CLOSE_MIN_PRICE: exclude stocks below this price (penny stock filter). ₹100 default.
@@ -41,6 +41,9 @@ class Config:
     EPISODE_MIN_BARS: int  = 8
     SL_MIN_PCT: float      = 0.0015   # 0.15%
     SL_MAX_PCT: float      = 0.030    # 3.0%
+
+    # RVOL spike detection
+    RVOL_SPIKE_THRESHOLD: float = float(os.getenv("RVOL_SPIKE_THRESHOLD", "3.0"))
 
     # Dashboard
     DASHBOARD_PORT: int    = int(os.getenv("SCANNER_PORT", "5050"))
