@@ -51,8 +51,14 @@ def main():
     is_live = False   # suppress alerts during bootstrap
 
     def on_alert(alert: Alert):
-        if is_live:
-            alert_mgr.add(alert)
+        if not is_live:
+            return
+        # Only forward alerts whose bar closed within the last 3 bar-lengths.
+        # Filters out historical bars seeded on the first live poll cycle.
+        age_seconds = int(time.time()) - alert.ts
+        if age_seconds > alert.tf * 3 * 60:
+            return
+        alert_mgr.add(alert)
 
     def on_bar(symbol: str, tf: int, bar):
         """
