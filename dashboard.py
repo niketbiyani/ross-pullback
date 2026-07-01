@@ -171,9 +171,9 @@ function render(){
   </tr>`).join('');
 }
 
-fetch('/api/alerts').then(r=>r.json()).then(d=>{alerts=d;render();});
+fetch('./api/alerts').then(r=>r.json()).then(d=>{alerts=d;render();});
 
-const es=new EventSource('/stream');
+const es=new EventSource('./stream');
 es.onopen=()=>{const s=document.getElementById('status');s.textContent='live';s.className='live';};
 es.onerror=()=>{document.getElementById('status').textContent='reconnecting…';};
 es.addEventListener('alert',e=>{
