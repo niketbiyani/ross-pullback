@@ -155,7 +155,7 @@ class LiveFeed:
                 logger.info("First poll response: %s", str(resp)[:600])
                 self._first_poll_logged = True
             if not isinstance(resp, dict) or resp.get("status") != "success":
-                logger.debug("Poll non-success: %s", str(resp)[:200])
+                logger.info("Poll non-success: %s", str(resp)[:300])
                 return
             data = resp.get("data", {})
             # Format A: {"NSE_EQ": {"<sid>": {"LTP": ..., ...}, ...}}
