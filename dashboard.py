@@ -169,13 +169,14 @@ h1{font-size:15px;color:#60a5fa;letter-spacing:.5px}
 <thead><tr>
   <th style="width:28px">#</th>
   <th>Symbol</th>
-  <th>Rel Vol</th>
+  <th>Bar RVOL</th>
+  <th>Cum RVOL</th>
   <th>Today Vol</th>
   <th>Avg Daily</th>
   <th>Buyers → Sellers</th>
 </tr></thead>
 <tbody id="lb-tbody">
-  <tr class="lb-empty"><td colspan="6">Waiting for live data…</td></tr>
+  <tr class="lb-empty"><td colspan="7">Waiting for live data…</td></tr>
 </tbody>
 </table>
 </div>
@@ -206,6 +207,7 @@ function fmtV(v){
   return v>=1e6?(v/1e6).toFixed(2)+'M':v>=1e3?(v/1e3).toFixed(1)+'K':String(v);
 }
 function ratioCls(r){return r>=5?'ratio-hi':r>=2?'ratio-md':'ratio-lo';}
+function barRvolCls(r){return r>=10?'ratio-hi':r>=2?'ratio-md':'ratio-lo';}
 
 let lbData = [];
 let lbMinVol = 500000;
@@ -221,14 +223,16 @@ function renderLeaderboard() {
   document.getElementById('lb-count').textContent = rows.length + ' symbols';
   const tbody = document.getElementById('lb-tbody');
   if (!rows.length) {
-    tbody.innerHTML = '<tr class="lb-empty"><td colspan="6">No data — waiting for market open</td></tr>';
+    tbody.innerHTML = '<tr class="lb-empty"><td colspan="7">No data — waiting for market open</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map((r, i) => {
     const bp = Math.round(r.buyer_pct * 100), sp = 100 - bp;
+    const brvol = r.bar_rvol || 0;
     return `<tr>
       <td style="color:#4b5563;font-size:10px">${i+1}</td>
       <td><b>${r.symbol}</b></td>
+      <td class="${barRvolCls(brvol)}">${brvol.toFixed(1)}×</td>
       <td class="${ratioCls(r.ratio)}">${r.ratio.toFixed(2)}×</td>
       <td>${fmtV(r.today_vol)}</td>
       <td style="color:#4b5563">${fmtV(r.avg_daily)}</td>

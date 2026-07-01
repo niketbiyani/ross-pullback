@@ -69,15 +69,20 @@ def main():
     # Stores full bar dicts so we can compute volume + buyer/seller split
     today_bars: dict[str, deque] = {}   # symbol → deque(maxlen=10) of bar dicts
 
+    # Per-minute-slot RVOL trackers — populated after universe build, used in leaderboard
+    rvol_trackers: dict[str, RvolTracker] = {}
+
     # ── leaderboard computation ───────────────────────────────────────────────
 
     def compute_leaderboard() -> list[dict]:
         """
-        Rank symbols by cumulative today volume vs expected volume at this point in
-        the session: ratio = today_vol / (avg_daily_vol × elapsed_fraction).
-        elapsed_fraction = minutes since 9:15 IST / 375 (full session length).
-        A ratio of 5 means "on pace for 5× normal daily volume today."
-        Returns top 20, most active first.
+        Rank symbols by Bar RVOL — most recent 1m bar volume vs the historical
+        average for that exact minute slot across prior days.  This catches
+        mid-session spikes immediately (e.g. a 90× bar at 13:09 shows as 90×
+        even if the stock was flat all morning).
+
+        Also includes Cum RVOL = today_vol / (avg_daily × elapsed_fraction),
+        shown as a secondary column on the dashboard.
         """
         now_ist_min  = (int(time.time()) // 60 + 330) % (24 * 60)
         elapsed_min  = min(max(now_ist_min - 555, 1), 375)  # clamp to [1, 375]
@@ -93,8 +98,18 @@ def main():
 
             ratio = today_vol / (avg_daily * elapsed_frac)
 
+            # Bar RVOL from the most recent today bar
+            bars     = today_bars.get(symbol)
+            tracker  = rvol_trackers.get(symbol)
+            bar_rvol = 0.0
+            if bars and tracker:
+                last_b   = bars[-1]
+                bar_rvol = tracker.bar_rvol(
+                    last_b.get('ts', 0),
+                    last_b.get('volume', 0.0),
+                )
+
             # Buyer/seller split from last ≤10 bars
-            bars      = today_bars.get(symbol)
             buyer_pct = 0.5
             if bars:
                 tv = 0.0; tb = 0.0
@@ -108,6 +123,7 @@ def main():
 
             rows.append({
                 'symbol':     symbol,
+                'bar_rvol':   round(bar_rvol, 1),
                 'ratio':      round(ratio, 2),
                 'today_vol':  round(today_vol),
                 'avg_daily':  round(avg_daily),
@@ -116,7 +132,7 @@ def main():
                 'seller_pct': round(1.0 - buyer_pct, 3),
             })
 
-        rows.sort(key=lambda x: x['ratio'], reverse=True)
+        rows.sort(key=lambda x: x['bar_rvol'], reverse=True)
         return rows
 
     # ── callbacks ─────────────────────────────────────────────────────────────
@@ -223,9 +239,7 @@ def main():
 
     avg_volumes.update({s['symbol']: s.get('avg_daily_volume', 0.0) for s in symbols})
 
-    rvol_trackers: dict[str, RvolTracker] = {
-        s['symbol']: RvolTracker(s['symbol']) for s in symbols
-    }
+    rvol_trackers.update({s['symbol']: RvolTracker(s['symbol']) for s in symbols})
 
     # ── bootstrap ─────────────────────────────────────────────────────────────
     bootstrap(ctx, symbols, on_bar)
