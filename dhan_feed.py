@@ -130,26 +130,32 @@ class LiveFeed:
     def __init__(self, dhan_context: DhanContext,
                  symbols: list[dict],
                  on_tick: Callable[[str, float, float, int], None]):
-        self._ctx       = dhan_context
-        self._symbols   = symbols
-        self._on_tick   = on_tick
-        self._id_map    = {s["security_id"]: s["symbol"] for s in symbols}
+        self._ctx              = dhan_context
+        self._symbols          = symbols
+        self._on_tick          = on_tick
+        self._id_map           = {s["security_id"]: s["symbol"] for s in symbols}
         self._feed: MarketFeed | None = None
         self._thread: threading.Thread | None = None
+        self._first_tick_logged = False
 
     def _handle(self, msg):
         try:
             if not isinstance(msg, dict):
                 return
-            mtype = msg.get("type", "")
-            if "Quote" not in mtype and "Ticker" not in mtype:
-                return
+            # No type filter — dhanhq sends type as an integer on some versions,
+            # which makes "Quote" not in <int> raise TypeError and silently drop all msgs.
             sid  = str(msg.get("security_id", ""))
             name = self._id_map.get(sid)
             if not name:
                 return
             ltp  = float(msg.get("LTP") or msg.get("last_price") or 0)
-            vol  = float(msg.get("volume") or msg.get("day_volume") or 0)
+            if ltp <= 0:
+                return
+            if not self._first_tick_logged:
+                logger.info("First tick: %s ltp=%.2f  msg_keys=%s", name, ltp, list(msg.keys()))
+                self._first_tick_logged = True
+            vol  = float(msg.get("day_volume") or msg.get("volume") or
+                         msg.get("quantity_traded") or 0)
             ltt  = msg.get("LTT") or msg.get("last_trade_time")
             if ltt is None:
                 ts = int(time.time())
@@ -158,8 +164,7 @@ class LiveFeed:
             else:
                 import datetime as _dt
                 ts = int(ltt.timestamp()) if isinstance(ltt, _dt.datetime) else int(time.time())
-            if ltp > 0:
-                self._on_tick(name, ltp, vol, ts)
+            self._on_tick(name, ltp, vol, ts)
         except Exception as e:
             logger.debug("Tick parse: %s", e)
 
