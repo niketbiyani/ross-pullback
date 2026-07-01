@@ -91,7 +91,7 @@ def main():
                     tracker.add_historical(bar_ts, vol)
                 else:
                     spike = tracker.score(b)
-                    if spike is not None and spike.rvol >= Config.RVOL_SPIKE_THRESHOLD:
+                    if spike is not None and spike.z_score >= Config.RVOL_SPIKE_THRESHOLD:
                         vol_alert_mgr.add(spike)
 
         key = (symbol, tf)

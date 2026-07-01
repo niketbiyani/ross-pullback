@@ -47,7 +47,7 @@ class Config:
     LIVE_CATCHUP_BARS: int      = int(os.getenv("LIVE_CATCHUP_BARS", "30"))
 
     # RVOL spike detection
-    RVOL_SPIKE_THRESHOLD: float = float(os.getenv("RVOL_SPIKE_THRESHOLD", "3.0"))
+    RVOL_SPIKE_THRESHOLD: float = float(os.getenv("RVOL_SPIKE_THRESHOLD", "2.0"))
 
     # Dashboard
     DASHBOARD_PORT: int    = int(os.getenv("SCANNER_PORT", "5050"))

@@ -1,81 +1,99 @@
 """
-Per-symbol RVOL (Relative Volume) tracker.
+Per-symbol volume spike detector using Z-score.
 
-During bootstrap, accumulates historical 1m bar volumes grouped by IST
-minute-of-day (e.g. all 9:15 bars across 5 days, all 9:16 bars, ...).
-After bootstrap, finalize() computes per-minute averages.
-During the live session, score() returns an RVOL score and buyer/seller
-breakdown for any 1m bar.
+During bootstrap, collects ALL 1m bar volumes across every history day
+into a single flat pool (no grouping by time of day).
+
+After bootstrap, finalize() computes one mean and one standard deviation
+across the entire pool — roughly 375 bars/day × 5 days = ~1875 samples.
+
+During the live session, score() computes:
+
+    z = (bar_volume − mean) / std
+
+A bar is flagged as a spike when z exceeds the configured threshold
+(default 2.0 ≈ 97.5th percentile of the stock's own volume distribution).
+
+This makes no assumption about what time of day it is — a bar is simply
+unusual if it is far above the stock's typical per-bar volume over the
+last N days, regardless of when in the session it occurs.
 
 Buyer/seller split mirrors TradingView's "Volume Buyers vs Sellers":
-  buyer_vol  = volume × (close − low)  / (high − low)
-  seller_vol = volume × (high − close) / (high − low)
+    buyer_vol  = volume × (close − low)  / (high − low)
+    seller_vol = volume × (high − close) / (high − low)
 
 Not thread-safe per instance — callers must ensure serial access per symbol.
-(Bootstrap workers each own exactly one symbol, so this is guaranteed.)
 """
+import math
 from dataclasses import dataclass
 
 
-def _minute_ist(ts: int) -> int | None:
-    """UTC Unix timestamp → IST minute-of-day. Returns None outside NSE hours."""
-    m = (ts // 60 + 330) % (24 * 60)   # IST minutes since midnight
-    return m if 555 <= m < 930 else None   # 9:15 ≤ m < 15:30
+def _in_market_hours(ts: int) -> bool:
+    """Return True if UTC timestamp falls within NSE trading hours (IST 9:15–15:30)."""
+    m = (ts // 60 + 330) % (24 * 60)
+    return 555 <= m < 930
+
+
+def _time_ist(ts: int) -> str:
+    m = (ts // 60 + 330) % (24 * 60)
+    return f"{m // 60:02d}:{m % 60:02d}"
 
 
 @dataclass
 class VolumeSpike:
-    symbol:     str
-    ts:         int
-    time_ist:   str
-    close:      float
-    volume:     float
-    avg_volume: float
-    rvol:       float        # volume / historical avg for this minute
-    buyer_vol:  float        # estimated shares bought
-    seller_vol: float        # estimated shares sold
-    buyer_pct:  float        # buyer_vol / volume  (0.0–1.0)
+    symbol:    str
+    ts:        int
+    time_ist:  str
+    close:     float
+    volume:    float     # this bar's volume
+    mean_vol:  float     # mean of all historical 1m bars (5-day pool)
+    std_vol:   float     # std dev of that pool
+    z_score:   float     # (volume − mean) / std
+    buyer_vol:  float
+    seller_vol: float
+    buyer_pct:  float    # 0.0–1.0
 
 
 class RvolTracker:
     """One instance per symbol. Lifecycle: add_historical* → finalize → score*."""
 
-    __slots__ = ('symbol', '_hist', '_avg', '_ready')
+    __slots__ = ('symbol', '_vols', '_mean', '_std', '_ready')
 
     def __init__(self, symbol: str):
         self.symbol  = symbol
-        self._hist:  dict[int, list[float]] = {}   # minute_ist → [daily vols]
-        self._avg:   dict[int, float]       = {}   # minute_ist → mean vol
+        self._vols:  list[float] = []   # flat pool of all historical 1m volumes
+        self._mean   = 0.0
+        self._std    = 1.0
         self._ready  = False
 
     # ── bootstrap phase ───────────────────────────────────────────────────────
 
     def add_historical(self, ts: int, volume: float) -> None:
+        """Accumulate one 1m bar volume (market hours only)."""
         if self._ready or volume <= 0:
             return
-        m = _minute_ist(ts)
-        if m is not None:
-            self._hist.setdefault(m, []).append(volume)
+        if _in_market_hours(ts):
+            self._vols.append(volume)
 
     def finalize(self) -> None:
-        """Compute per-minute averages and release raw history."""
-        for m, vols in self._hist.items():
-            self._avg[m] = sum(vols) / len(vols)
-        self._hist.clear()
+        """Compute mean and std across the full 5-day pool; release raw data."""
+        n = len(self._vols)
+        if n >= 2:
+            mean = sum(self._vols) / n
+            variance = sum((v - mean) ** 2 for v in self._vols) / (n - 1)
+            self._mean = mean
+            self._std  = max(math.sqrt(variance), 1.0)
+        self._vols.clear()
         self._ready = True
 
     # ── live phase ────────────────────────────────────────────────────────────
 
     def score(self, bar: dict) -> VolumeSpike | None:
-        """Score one live 1m bar. Returns VolumeSpike or None (outside hours / no baseline)."""
-        if not self._ready:
+        """Score one live 1m bar. Returns VolumeSpike or None."""
+        if not self._ready or self._mean == 0.0:
             return None
-        ts  = bar.get('ts', bar.get('timestamp', 0))
-        m   = _minute_ist(ts)
-        if m is None:
-            return None
-        avg = self._avg.get(m, 0.0)
-        if avg == 0.0:
+        ts = bar.get('ts', bar.get('timestamp', 0))
+        if not _in_market_hours(ts):
             return None
 
         vol    = bar.get('volume', 0.0)
@@ -90,11 +108,12 @@ class RvolTracker:
         return VolumeSpike(
             symbol     = self.symbol,
             ts         = ts,
-            time_ist   = f"{m // 60:02d}:{m % 60:02d}",
+            time_ist   = _time_ist(ts),
             close      = close,
             volume     = vol,
-            avg_volume = avg,
-            rvol       = vol / avg,
+            mean_vol   = self._mean,
+            std_vol    = self._std,
+            z_score    = (vol - self._mean) / self._std,
             buyer_vol  = buyer_vol,
             seller_vol = seller_vol,
             buyer_pct  = buyer_vol / max(vol, 1e-6),

@@ -114,14 +114,14 @@ tr:hover td{background:#111827}
     <span class="hot-title">Vol Spikes</span>
     <span class="hot-thresh" id="hot-thresh"></span>
     <span id="hot-count">0 spikes</span>
-    <span class="hot-explain">RVOL = this bar's volume ÷ avg volume at the same minute of day (5-day history)</span>
+    <span class="hot-explain">Z-score = how many std deviations this bar's volume is above the 5-day average (all bars, no time-of-day grouping)</span>
   </div>
   <div id="hot-scroll">
     <table id="hot-table">
       <thead><tr>
         <th>Time</th><th>Symbol</th><th>Price</th>
-        <th>RVOL <span style="font-weight:normal;color:#1f2937">× usual</span></th>
-        <th>This bar</th><th>Usual/min</th>
+        <th>Vol (bar)</th><th>5d Avg/bar</th>
+        <th>Z-score <span style="font-weight:normal;color:#374151" title="Std deviations above the 5-day per-bar mean (all market-hours bars pooled)">ℹ</span></th>
         <th>Buyers → Sellers</th>
       </tr></thead>
       <tbody id="hot-tbody">
@@ -269,7 +269,7 @@ const HOT_MAX_AGE_MS = 45 * 60 * 1000;   // keep spikes for 45 min
 function fmtV(v){
   return v>=1e6?(v/1e6).toFixed(2)+'M':v>=1e3?(v/1e3).toFixed(1)+'K':v.toFixed(0);
 }
-function rvolCls(r){return r>=5?'rvol-hi':r>=3?'rvol-md':'rvol-lo';}
+function rvolCls(z){return z>=4?'rvol-hi':z>=2?'rvol-md':'rvol-lo';}
 function renderHot(){
   const now=Date.now();
   const rows=volSpikes
@@ -289,9 +289,9 @@ function renderHot(){
       <td style="color:#6b7280">${s.time_ist}</td>
       <td><b>${s.symbol}</b></td>
       <td style="color:#94a3b8">₹${s.close.toFixed(2)}</td>
-      <td class="${rvolCls(s.rvol)}">${s.rvol.toFixed(1)}×</td>
       <td>${fmtV(s.volume)}</td>
-      <td style="color:#4b5563">${fmtV(s.avg_volume)}</td>
+      <td style="color:#4b5563">${fmtV(s.mean_vol)}</td>
+      <td class="${rvolCls(s.z_score)}">${s.z_score.toFixed(1)}σ</td>
       <td>
         <span style="color:#4ade80">${bp}%</span>
         <span class="bs-bar"><span class="bs-b" style="width:${bp}%"></span><span class="bs-s" style="width:${sp}%"></span></span>
@@ -334,7 +334,7 @@ es.addEventListener('vol_spike',e=>{
 
 /* Set threshold label from server */
 fetch('./api/config').then(r=>r.json()).then(d=>{
-  document.getElementById('hot-thresh').textContent='RVOL ≥ '+d.rvol_threshold+'×';
+  document.getElementById('hot-thresh').textContent='Z ≥ '+d.rvol_threshold+'σ';
 });
 </script>
 </body>

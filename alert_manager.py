@@ -69,13 +69,14 @@ class VolumeAlertManager:
                 return
             self._seen.add(key)
             d = {
-                'symbol':     spike.symbol,
-                'ts':         spike.ts,
-                'time_ist':   spike.time_ist,
-                'close':      spike.close,
-                'volume':     spike.volume,
-                'avg_volume': spike.avg_volume,
-                'rvol':       round(spike.rvol, 2),
+                'symbol':    spike.symbol,
+                'ts':        spike.ts,
+                'time_ist':  spike.time_ist,
+                'close':     spike.close,
+                'volume':    spike.volume,
+                'mean_vol':  round(spike.mean_vol, 1),
+                'std_vol':   round(spike.std_vol, 1),
+                'z_score':   round(spike.z_score, 2),
                 'buyer_vol':  spike.buyer_vol,
                 'seller_vol': spike.seller_vol,
                 'buyer_pct':  round(spike.buyer_pct, 3),
