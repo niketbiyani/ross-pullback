@@ -144,6 +144,11 @@ def main():
 
         if tf == 1:
             vol = b.get('volume', 0.0)
+            if date.fromtimestamp(bar_ts) == date.today():
+                today_volumes[symbol] = today_volumes.get(symbol, 0.0) + vol
+                if symbol not in today_bars:
+                    today_bars[symbol] = deque(maxlen=10)
+                today_bars[symbol].append(b)
             # Feed historical bars to RVOL tracker during bootstrap
             tracker = rvol_trackers.get(symbol)
             if tracker is not None and not is_live:

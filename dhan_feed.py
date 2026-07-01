@@ -63,8 +63,8 @@ def _save_cache(symbol: str, cache: dict[str, list[dict]]):
 # ── historical bootstrap ──────────────────────────────────────────────────────
 
 def _trading_days(n: int) -> list[str]:
-    """Last n weekdays (Mon-Fri) ending yesterday, oldest first."""
-    days, d = [], date.today() - timedelta(days=1)
+    """Last n weekdays (Mon-Fri) ending today, oldest first."""
+    days, d = [], date.today()
     while len(days) < n:
         if d.weekday() < 5:
             days.append(d.isoformat())
@@ -217,6 +217,7 @@ class LiveFeed:
 
     def _fetch_today(self, sec: dict) -> list[dict]:
         today = date.today().isoformat()
+        name  = sec["symbol"]
         _api_throttle()
         try:
             resp = self._client.intraday_minute_data(
@@ -227,7 +228,7 @@ class LiveFeed:
                 to_date=today,
             )
             if not isinstance(resp, dict) or not isinstance(resp.get("data"), dict):
-                return []
+                raise ValueError("bad response")
             data = resp["data"]
             tss = data.get("timestamp", [])
             ops = data.get("open",   [])
@@ -235,6 +236,8 @@ class LiveFeed:
             los = data.get("low",    [])
             cls = data.get("close",  [])
             vls = data.get("volume", [])
+            if not tss:
+                raise ValueError("empty")
             bars = []
             for i, ts in enumerate(tss):
                 bars.append({
@@ -246,10 +249,19 @@ class LiveFeed:
                     'volume': float(vls[i]) if i < len(vls) else 0.0,
                 })
             bars.sort(key=lambda x: x['ts'])
+            # Persist today's bars so they survive after market close
+            cache = _load_cache(name)
+            cache[today] = bars
+            _save_cache(name, cache)
             return bars
         except Exception as e:
-            logger.debug("Live fetch %s: %s", sec["symbol"], e)
-            return []
+            # API returned nothing (market closed, data unavailable) —
+            # fall back to today's bars from disk cache if we fetched them earlier.
+            cache = _load_cache(name)
+            cached = cache.get(today, [])
+            if cached:
+                logger.debug("Live fetch %s: API empty, using %d cached bars", name, len(cached))
+            return cached
 
     def _process_symbol(self, sec: dict):
         name    = sec["symbol"]
