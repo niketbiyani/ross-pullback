@@ -25,7 +25,7 @@ _LIVE_POLL_INTERVAL = 15   # seconds between live poll cycles
 # so 16 workers don't flood Dhan's 20 req/s limit.
 _API_LOCK    = threading.Lock()
 _API_LAST: float = 0.0
-_MIN_API_GAP = 0.05   # 1 / 20 req·s⁻¹
+_MIN_API_GAP = 0.12   # ~8 req·s⁻¹ — well under Dhan's rate limit
 
 
 def _api_throttle():
@@ -35,6 +35,12 @@ def _api_throttle():
         if gap > 0:
             time.sleep(gap)
         _API_LAST = time.time()
+
+
+def _market_open() -> bool:
+    """True if current IST time is within NSE trading hours (9:15–15:30)."""
+    m = (int(time.time()) // 60 + 330) % (24 * 60)
+    return 555 <= m < 930
 
 
 # ── bar cache (disk) ──────────────────────────────────────────────────────────
@@ -264,8 +270,13 @@ class LiveFeed:
             return cached
 
     def _process_symbol(self, sec: dict):
-        name    = sec["symbol"]
-        bars_1m = self._fetch_today(sec)
+        name  = sec["symbol"]
+        today = date.today().isoformat()
+        if _market_open():
+            bars_1m = self._fetch_today(sec)
+        else:
+            # Market closed — no new bars, use what bootstrap cached
+            bars_1m = _load_cache(name).get(today, [])
         if not bars_1m:
             return
         # Drop the last bar — it may still be forming
