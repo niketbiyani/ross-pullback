@@ -21,7 +21,6 @@ from dhanhq import DhanContext
 from config import Config
 from indicators import IndicatorSet
 from strategy_engine import StrategyEngine, BarRecord, Alert
-from bar_aggregator import BarAggregator
 from universe import build_universe
 from dhan_feed import bootstrap, LiveFeed
 from alert_manager import AlertManager
@@ -46,9 +45,8 @@ def main():
     alert_mgr = AlertManager()
 
     # ── state stores (created lazily as new symbol-TF combos appear) ─────────
-    ind_sets:    dict[tuple, IndicatorSet]   = {}
-    engines:     dict[tuple, StrategyEngine] = {}
-    aggregators: dict[str, BarAggregator]    = {}
+    ind_sets: dict[tuple, IndicatorSet]   = {}
+    engines:  dict[tuple, StrategyEngine] = {}
 
     is_live = False   # suppress alerts during bootstrap
 
@@ -81,9 +79,6 @@ def main():
         )
         engines[key].update(rec)
 
-    def on_bar_from_agg(symbol: str, tf: int, bar: dict):
-        on_bar(symbol, tf, bar)
-
     # ── dashboard (start immediately so nginx never gets 502) ─────────────────
     app = create_app(alert_mgr)
     logger.info('Dashboard → http://%s:%d', Config.DASHBOARD_HOST, Config.DASHBOARD_PORT)
@@ -106,10 +101,6 @@ def main():
         sys.exit(1)
     logger.info('Universe: %d symbols', len(symbols))
 
-    # Create bar aggregators (one per symbol)
-    for sym in symbols:
-        aggregators[sym['symbol']] = BarAggregator(sym['symbol'], on_bar_from_agg)
-
     # ── historical bootstrap ──────────────────────────────────────────────────
     bootstrap(ctx, symbols, on_bar)
 
@@ -117,13 +108,8 @@ def main():
     is_live = True
     logger.info('Live mode active — alerts are now forwarded to dashboard')
 
-    # ── live tick feed ────────────────────────────────────────────────────────
-    def on_tick(symbol: str, ltp: float, day_volume: float, ts: int):
-        agg = aggregators.get(symbol)
-        if agg:
-            agg.on_tick(ltp, day_volume, ts)
-
-    feed = LiveFeed(ctx, symbols, on_tick)
+    # ── live bar feed (polls intraday_minute_data every 60 s) ─────────────────
+    feed = LiveFeed(ctx, symbols, on_bar)
     feed.start()
 
     # ── heartbeat ─────────────────────────────────────────────────────────────

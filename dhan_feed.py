@@ -1,6 +1,7 @@
 """
 Historical bootstrap (20 days of 1-min bars per symbol) and
-live REST-polling tick feed using Dhan quote_data API.
+live polling via intraday_minute_data (today's bars, every 60 s).
+Uses the same endpoint as bootstrap — no live WebSocket subscription needed.
 """
 import logging
 import threading
@@ -15,8 +16,7 @@ from config import Config
 
 logger = logging.getLogger(__name__)
 
-_POLL_INTERVAL = 5   # seconds between REST polls
-_CHUNK_SIZE    = 50  # securities per quote_data call (safe batch limit)
+_LIVE_POLL_INTERVAL = 60   # seconds between live poll cycles
 
 
 # ── historical bootstrap ──────────────────────────────────────────────────────
@@ -117,94 +117,102 @@ def bootstrap(dhan_context: DhanContext,
     logger.info("Bootstrap complete.")
 
 
-# ── live REST-polling feed ────────────────────────────────────────────────────
+# ── live intraday polling feed ────────────────────────────────────────────────
 
 class LiveFeed:
     """
-    Polls Dhan ticker_data REST API every 5 s for all symbols and calls
-    on_tick(symbol_name, ltp, day_volume, unix_ts) for each quote.
-    Avoids WebSocket connection-rate limits entirely.
+    Polls intraday_minute_data for today every 60 s and calls
+    on_bar(symbol, tf, bar_dict) for each new closed bar across 1/3/5/15-min.
+    Uses the same endpoint as bootstrap — no live data subscription required.
     """
 
     def __init__(self, dhan_context: DhanContext,
                  symbols: list[dict],
-                 on_tick: Callable[[str, float, float, int], None]):
-        self._client           = dhanhq(dhan_context)
-        self._symbols          = symbols
-        self._on_tick          = on_tick
-        self._id_map           = {s["security_id"]: s["symbol"] for s in symbols}
-        self._running          = False
+                 on_bar: Callable[[str, int, dict], None]):
+        self._client  = dhanhq(dhan_context)
+        self._symbols = symbols
+        self._on_bar  = on_bar
+        self._last_ts: dict[tuple, int] = {}   # (symbol, tf) -> last processed ts
+        self._running = False
         self._thread: threading.Thread | None = None
-        self._first_poll_logged = False
 
-    def _parse_quote(self, sid: str, q) -> tuple[float, float]:
-        """Return (ltp, day_volume) from a quote object (dict or nested)."""
-        if isinstance(q, dict):
-            ltp = float(q.get("last_price") or q.get("LTP") or
-                        q.get("lastTradedPrice") or q.get("ltp") or 0)
-            vol = float(q.get("volume") or q.get("day_volume") or
-                        q.get("totalVolume") or q.get("tot_buy_quan") or 0)
-            return ltp, vol
-        return 0.0, 0.0
-
-    def _poll_chunk(self, chunk: list[str], ts: int):
-        """Fetch LTP for one chunk of security IDs and fire on_tick."""
+    def _fetch_today(self, sec: dict) -> list[dict]:
+        today = date.today().isoformat()
         try:
-            resp = self._client.ticker_data(securities={"NSE_EQ": chunk})
-            if not self._first_poll_logged:
-                logger.info("First poll response: %s", str(resp)[:600])
-                self._first_poll_logged = True
-            if not isinstance(resp, dict) or resp.get("status") != "success":
-                logger.info("Poll non-success: %s", str(resp)[:300])
-                return
-            data = resp.get("data", {})
-            # Format A: {"NSE_EQ": {"<sid>": {"LTP": ..., ...}, ...}}
-            if isinstance(data, dict):
-                segment = data.get("NSE_EQ", {})
-                if isinstance(segment, dict):
-                    for sid, q in segment.items():
-                        name = self._id_map.get(str(sid))
-                        if not name:
-                            continue
-                        ltp, vol = self._parse_quote(sid, q)
-                        if ltp > 0:
-                            self._on_tick(name, ltp, vol, ts)
-                    return
-            # Format B: [{"security_id": "...", "last_price": ..., ...}]
-            if isinstance(data, list):
-                for item in data:
-                    if not isinstance(item, dict):
-                        continue
-                    sid  = str(item.get("security_id") or item.get("securityId") or "")
-                    name = self._id_map.get(sid)
-                    if not name:
-                        continue
-                    ltp, vol = self._parse_quote(sid, item)
-                    if ltp > 0:
-                        self._on_tick(name, ltp, vol, ts)
+            resp = self._client.intraday_minute_data(
+                security_id=sec["security_id"],
+                exchange_segment="NSE_EQ",
+                instrument_type="EQUITY",
+                from_date=today,
+                to_date=today,
+            )
+            if not isinstance(resp, dict) or not isinstance(resp.get("data"), dict):
+                return []
+            data = resp["data"]
+            tss = data.get("timestamp", [])
+            ops = data.get("open",   [])
+            his = data.get("high",   [])
+            los = data.get("low",    [])
+            cls = data.get("close",  [])
+            vls = data.get("volume", [])
+            bars = []
+            for i, ts in enumerate(tss):
+                bars.append({
+                    'ts':     int(ts),
+                    'open':   float(ops[i]),
+                    'high':   float(his[i]),
+                    'low':    float(los[i]),
+                    'close':  float(cls[i]),
+                    'volume': float(vls[i]) if i < len(vls) else 0.0,
+                })
+            bars.sort(key=lambda x: x['ts'])
+            return bars
         except Exception as e:
-            logger.error("Poll chunk error: %s", e)
+            logger.debug("Live fetch %s: %s", sec["symbol"], e)
+            return []
 
-    def _poll(self):
-        sec_ids = list(self._id_map.keys())
-        ts = int(time.time())
-        for i in range(0, len(sec_ids), _CHUNK_SIZE):
-            self._poll_chunk(sec_ids[i:i + _CHUNK_SIZE], ts)
-            if i + _CHUNK_SIZE < len(sec_ids):
-                time.sleep(0.1)  # small gap between chunks
+    def _process_symbol(self, sec: dict):
+        name    = sec["symbol"]
+        bars_1m = self._fetch_today(sec)
+        if not bars_1m:
+            return
+        # Drop the last bar — it may still be forming
+        if len(bars_1m) > 1:
+            bars_1m = bars_1m[:-1]
+
+        for tf in [1, 3, 5, 15]:
+            bars    = bars_1m if tf == 1 else _resample(bars_1m, tf)
+            last_ts = self._last_ts.get((name, tf), 0)
+            new_bars = [b for b in bars if b['ts'] > last_ts]
+            for b in new_bars:
+                self._on_bar(name, tf, b)
+            if new_bars:
+                self._last_ts[(name, tf)] = new_bars[-1]['ts']
+
+    def _poll_all(self):
+        logged = False
+        for sec in self._symbols:
+            if not self._running:
+                break
+            self._process_symbol(sec)
+            if not logged:
+                logger.info("Live poll cycle running (%d symbols)...", len(self._symbols))
+                logged = True
+            time.sleep(0.08)   # 12.5 req/s, well under 20 req/s limit
 
     def start(self):
         self._running = True
 
         def _run():
-            logger.info("Live feed started (REST polling every %ds, %d symbols).",
-                        _POLL_INTERVAL, len(self._symbols))
+            logger.info("Live feed started (intraday_minute_data polling every %ds, %d symbols).",
+                        _LIVE_POLL_INTERVAL, len(self._symbols))
             while self._running:
                 t0 = time.time()
-                self._poll()
+                self._poll_all()
                 elapsed = time.time() - t0
-                wait = max(0.0, _POLL_INTERVAL - elapsed)
-                if wait:
+                logger.info("Live poll cycle done in %.1fs.", elapsed)
+                wait = max(0.0, _LIVE_POLL_INTERVAL - elapsed)
+                if self._running and wait > 0:
                     time.sleep(wait)
 
         self._thread = threading.Thread(target=_run, daemon=True, name="LiveFeed")
