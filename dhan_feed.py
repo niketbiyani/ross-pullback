@@ -141,9 +141,14 @@ def _fetch_history(client: dhanhq, sec: dict, n_days: int) -> tuple[list[dict], 
     api_calls    = 0
     changed      = False
 
+    today = date.today().isoformat()
     for day in needed:
         if day in cache:
-            continue
+            # Re-fetch today if previously cached as empty (rate-limit gap from prior run)
+            if day == today and not cache[day]:
+                pass
+            else:
+                continue
         bars = _fetch_day(client, sec, day)
         cache[day] = bars
         api_calls += 1
