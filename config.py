@@ -40,6 +40,7 @@ class Config:
 
     # Cache
     UNIVERSE_CACHE: str    = os.path.join(_here, "universe_cache.json")
+    BARS_CACHE_DIR: str    = os.path.join(_here, "bars_cache")
 
     @classmethod
     def validate(cls) -> list[str]:

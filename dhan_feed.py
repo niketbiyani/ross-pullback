@@ -1,9 +1,11 @@
 """
 Historical bootstrap (20 days of 1-min bars per symbol) and
-live polling via intraday_minute_data (today's bars, every 60 s).
-Uses the same endpoint as bootstrap — no live WebSocket subscription needed.
+live polling via intraday_minute_data (today's bars, every 15 s).
+Bar data is cached to disk — same-day restarts replay from cache in seconds.
 """
+import json
 import logging
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -16,7 +18,30 @@ from config import Config
 
 logger = logging.getLogger(__name__)
 
-_LIVE_POLL_INTERVAL = 60   # seconds between live poll cycles
+_LIVE_POLL_INTERVAL = 15   # seconds between live poll cycles
+
+
+# ── bar cache (disk) ──────────────────────────────────────────────────────────
+
+def _cache_path(symbol: str) -> str:
+    return os.path.join(Config.BARS_CACHE_DIR, f"{symbol}.json")
+
+
+def _load_cache(symbol: str) -> dict[str, list[dict]]:
+    path = _cache_path(symbol)
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _save_cache(symbol: str, cache: dict[str, list[dict]]):
+    os.makedirs(Config.BARS_CACHE_DIR, exist_ok=True)
+    with open(_cache_path(symbol), 'w') as f:
+        json.dump(cache, f)
 
 
 # ── historical bootstrap ──────────────────────────────────────────────────────
@@ -47,74 +72,110 @@ def _resample(bars_1m: list[dict], tf: int) -> list[dict]:
     return [groups[k] for k in sorted(groups)]
 
 
-def _fetch_history(client: dhanhq, sec: dict, n_days: int) -> list[dict]:
-    """Fetch n_days of 1-min bars for one security."""
-    bars = []
-    for day in _trading_days(n_days):
-        try:
-            resp = client.intraday_minute_data(
-                security_id=sec["security_id"],
-                exchange_segment="NSE_EQ",
-                instrument_type="EQUITY",
-                from_date=day,
-                to_date=day,
-            )
-            if not isinstance(resp, dict) or not isinstance(resp.get("data"), dict):
-                continue
-            data = resp["data"]
-            tss  = data.get("timestamp", [])
-            ops  = data.get("open",   [])
-            his  = data.get("high",   [])
-            los  = data.get("low",    [])
-            cls  = data.get("close",  [])
-            vls  = data.get("volume", [])
-            for i, ts in enumerate(tss):
-                bars.append({
-                    'ts':     int(ts),
-                    'open':   float(ops[i]),
-                    'high':   float(his[i]),
-                    'low':    float(los[i]),
-                    'close':  float(cls[i]),
-                    'volume': float(vls[i]) if i < len(vls) else 0.0,
-                })
-        except Exception as e:
-            logger.debug("[%s] history %s: %s", sec["symbol"], day, e)
+def _fetch_day(client: dhanhq, sec: dict, day: str) -> list[dict]:
+    """Fetch one day of 1-min bars from the API."""
+    try:
+        resp = client.intraday_minute_data(
+            security_id=sec["security_id"],
+            exchange_segment="NSE_EQ",
+            instrument_type="EQUITY",
+            from_date=day,
+            to_date=day,
+        )
+        if not isinstance(resp, dict) or not isinstance(resp.get("data"), dict):
+            return []
+        data = resp["data"]
+        tss  = data.get("timestamp", [])
+        ops  = data.get("open",   [])
+        his  = data.get("high",   [])
+        los  = data.get("low",    [])
+        cls  = data.get("close",  [])
+        vls  = data.get("volume", [])
+        return [
+            {
+                'ts':     int(tss[i]),
+                'open':   float(ops[i]),
+                'high':   float(his[i]),
+                'low':    float(los[i]),
+                'close':  float(cls[i]),
+                'volume': float(vls[i]) if i < len(vls) else 0.0,
+            }
+            for i in range(len(tss))
+        ]
+    except Exception as e:
+        logger.debug("[%s] fetch %s: %s", sec["symbol"], day, e)
+        return []
+
+
+def _fetch_history(client: dhanhq, sec: dict, n_days: int) -> tuple[list[dict], int]:
+    """
+    Return (bars_1m, api_calls) for the last n_days trading days.
+    Loads from disk cache; only calls API for days not yet cached.
+    """
+    name         = sec["symbol"]
+    needed       = _trading_days(n_days)
+    cache        = _load_cache(name)
+    api_calls    = 0
+    changed      = False
+
+    for day in needed:
+        if day in cache:
+            continue
+        bars = _fetch_day(client, sec, day)
+        cache[day] = bars
+        api_calls += 1
+        changed = True
         time.sleep(0.08)
+
+    # Prune days outside the window
+    for day in list(cache.keys()):
+        if day not in needed:
+            del cache[day]
+            changed = True
+
+    if changed:
+        _save_cache(name, cache)
+
+    bars: list[dict] = []
+    for day in needed:
+        bars.extend(cache.get(day, []))
     bars.sort(key=lambda x: x['ts'])
-    return bars
+    return bars, api_calls
 
 
 def bootstrap(dhan_context: DhanContext,
               symbols: list[dict],
               on_bar: Callable[[str, int, dict], None]):
     """
-    Fetch 20 days of 1-min data for every symbol, derive 3/5/15-min bars,
-    and call on_bar(symbol, tf, bar_dict) for each bar in chronological order.
-    This seeds all indicator sets so they are warm when live trading starts.
+    Load/fetch 20 days of 1-min data for every symbol (from cache when possible),
+    derive 3/5/15-min bars, and call on_bar(symbol, tf, bar_dict) for each bar.
     """
-    logger.info("Bootstrapping %d symbols × %d days...",
-                len(symbols), Config.HISTORY_DAYS)
-    client = dhanhq(dhan_context)
+    logger.info("Bootstrapping %d symbols × %d days (cache: %s)...",
+                len(symbols), Config.HISTORY_DAYS, Config.BARS_CACHE_DIR)
+    client     = dhanhq(dhan_context)
+    total_api  = 0
 
     def _one(sec: dict):
-        bars_1m = _fetch_history(client, sec, Config.HISTORY_DAYS)
-        name    = sec["symbol"]
+        bars_1m, api_calls = _fetch_history(client, sec, Config.HISTORY_DAYS)
+        name = sec["symbol"]
         for tf in Config.TIMEFRAMES:
             bars = bars_1m if tf == 1 else _resample(bars_1m, tf)
             for b in bars:
                 on_bar(name, tf, b)
-        return name, len(bars_1m)
+        return name, len(bars_1m), api_calls
 
     with ThreadPoolExecutor(max_workers=Config.MAX_WORKERS) as ex:
         futs = {ex.submit(_one, s): s for s in symbols}
         done = 0
         for fut in as_completed(futs):
-            name, n = fut.result()
+            name, n, calls = fut.result()
+            total_api += calls
             done += 1
             if done % 25 == 0 or done == len(symbols):
-                logger.info("  Bootstrap: %d / %d symbols", done, len(symbols))
+                logger.info("  Bootstrap: %d / %d symbols  (API calls so far: %d)",
+                            done, len(symbols), total_api)
 
-    logger.info("Bootstrap complete.")
+    logger.info("Bootstrap complete. Total API calls: %d (0 = fully cached).", total_api)
 
 
 # ── live intraday polling feed ────────────────────────────────────────────────
