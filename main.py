@@ -84,6 +84,20 @@ def main():
     def on_bar_from_agg(symbol: str, tf: int, bar: dict):
         on_bar(symbol, tf, bar)
 
+    # ── dashboard (start immediately so nginx never gets 502) ─────────────────
+    app = create_app(alert_mgr)
+    logger.info('Dashboard → http://%s:%d', Config.DASHBOARD_HOST, Config.DASHBOARD_PORT)
+
+    flask_thread = threading.Thread(
+        target=lambda: app.run(
+            host=Config.DASHBOARD_HOST, port=Config.DASHBOARD_PORT,
+            threaded=True, use_reloader=False,
+        ),
+        daemon=True, name='Dashboard'
+    )
+    flask_thread.start()
+    time.sleep(1)  # give Flask a moment to bind the port
+
     # ── build universe ────────────────────────────────────────────────────────
     logger.info('Building universe (volume filter ≥ %d shares)...', Config.VOLUME_THRESHOLD)
     symbols = build_universe(ctx)
@@ -108,22 +122,6 @@ def main():
         agg = aggregators.get(symbol)
         if agg:
             agg.on_tick(ltp, day_volume, ts)
-
-    feed = LiveFeed(ctx, symbols, on_tick)
-    feed.start()
-
-    # ── dashboard ─────────────────────────────────────────────────────────────
-    app = create_app(alert_mgr)
-    logger.info('Dashboard → http://%s:%d', Config.DASHBOARD_HOST, Config.DASHBOARD_PORT)
-
-    flask_thread = threading.Thread(
-        target=lambda: app.run(
-            host=Config.DASHBOARD_HOST, port=Config.DASHBOARD_PORT,
-            threaded=True, use_reloader=False,
-        ),
-        daemon=True, name='Dashboard'
-    )
-    flask_thread.start()
 
     # ── heartbeat ─────────────────────────────────────────────────────────────
     try:
