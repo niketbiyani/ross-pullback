@@ -207,6 +207,16 @@ def main():
         t.finalize()
     logger.info('RVOL baselines ready: %d symbols', len(rvol_trackers))
 
+    # If bhavcopy gave us zero avg_daily_volume (column name mismatch etc.),
+    # fall back to deriving it from the RVOL tracker: hist_mean × 375 bars/session.
+    missing = sum(1 for sym in rvol_trackers if avg_volumes.get(sym, 0) == 0)
+    if missing > 0:
+        logger.warning('avg_daily_volume=0 for %d/%d symbols — deriving from RVOL bootstrap data',
+                       missing, len(rvol_trackers))
+        for sym, tracker in rvol_trackers.items():
+            if avg_volumes.get(sym, 0) == 0 and tracker.hist_mean > 0:
+                avg_volumes[sym] = tracker.hist_mean * 375
+
     is_live = True
     logger.info('Live mode active — alerts and leaderboard now updating')
 
