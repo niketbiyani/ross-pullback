@@ -1,6 +1,6 @@
 """
 Historical bootstrap (20 days of 1-min bars per symbol) and
-live WebSocket tick feed using Dhan MarketFeed.
+live REST-polling tick feed using Dhan quote_data API.
 """
 import logging
 import threading
@@ -9,15 +9,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 from typing import Callable
 
-from dhanhq import DhanContext, dhanhq, MarketFeed
+from dhanhq import DhanContext, dhanhq
 
 from config import Config
 
 logger = logging.getLogger(__name__)
 
-# Dhan MarketFeed constants for NSE equity
-_NSE_EQ  = 1    # exchange segment integer
-_QUOTE   = 17   # feed type: LTP + OHLCV
+_POLL_INTERVAL = 5   # seconds between REST polls
+_CHUNK_SIZE    = 50  # securities per quote_data call (safe batch limit)
 
 
 # ── historical bootstrap ──────────────────────────────────────────────────────
@@ -118,87 +117,97 @@ def bootstrap(dhan_context: DhanContext,
     logger.info("Bootstrap complete.")
 
 
-# ── live WebSocket feed ───────────────────────────────────────────────────────
+# ── live REST-polling feed ────────────────────────────────────────────────────
 
 class LiveFeed:
     """
-    Connects to Dhan MarketFeed WebSocket and calls
-    on_tick(symbol_name, ltp, day_volume, unix_ts) on every tick.
-    Auto-reconnects on disconnect.
+    Polls Dhan quote_data REST API every 5 s for all symbols and calls
+    on_tick(symbol_name, ltp, day_volume, unix_ts) for each quote.
+    Avoids WebSocket connection-rate limits entirely.
     """
 
     def __init__(self, dhan_context: DhanContext,
                  symbols: list[dict],
                  on_tick: Callable[[str, float, float, int], None]):
-        self._ctx              = dhan_context
+        self._client           = dhanhq(dhan_context)
         self._symbols          = symbols
         self._on_tick          = on_tick
         self._id_map           = {s["security_id"]: s["symbol"] for s in symbols}
-        self._feed: MarketFeed | None = None
+        self._running          = False
         self._thread: threading.Thread | None = None
-        self._first_tick_logged = False
+        self._first_poll_logged = False
 
-    def _handle(self, msg):
+    def _parse_quote(self, sid: str, q) -> tuple[float, float]:
+        """Return (ltp, day_volume) from a quote object (dict or nested)."""
+        if isinstance(q, dict):
+            ltp = float(q.get("last_price") or q.get("LTP") or
+                        q.get("lastTradedPrice") or q.get("ltp") or 0)
+            vol = float(q.get("volume") or q.get("day_volume") or
+                        q.get("totalVolume") or q.get("tot_buy_quan") or 0)
+            return ltp, vol
+        return 0.0, 0.0
+
+    def _poll_chunk(self, chunk: list[str], ts: int):
+        """Fetch quotes for one chunk of security IDs and fire on_tick."""
         try:
-            if not isinstance(msg, dict):
+            resp = self._client.quote_data(securities={"NSE_EQ": chunk})
+            if not self._first_poll_logged:
+                logger.info("First poll response (truncated): %s", str(resp)[:400])
+                self._first_poll_logged = True
+            if not isinstance(resp, dict):
                 return
-            # No type filter — dhanhq sends type as an integer on some versions,
-            # which makes "Quote" not in <int> raise TypeError and silently drop all msgs.
-            sid  = str(msg.get("security_id", ""))
-            name = self._id_map.get(sid)
-            if not name:
-                return
-            ltp  = float(msg.get("LTP") or msg.get("last_price") or 0)
-            if ltp <= 0:
-                return
-            if not self._first_tick_logged:
-                logger.info("First tick: %s ltp=%.2f  msg_keys=%s", name, ltp, list(msg.keys()))
-                self._first_tick_logged = True
-            vol  = float(msg.get("day_volume") or msg.get("volume") or
-                         msg.get("quantity_traded") or 0)
-            ltt  = msg.get("LTT") or msg.get("last_trade_time")
-            if ltt is None:
-                ts = int(time.time())
-            elif isinstance(ltt, (int, float)):
-                ts = int(ltt) if ltt > 1_000_000_000 else int(ltt / 1000)
-            else:
-                import datetime as _dt
-                ts = int(ltt.timestamp()) if isinstance(ltt, _dt.datetime) else int(time.time())
-            self._on_tick(name, ltp, vol, ts)
+            data = resp.get("data", {})
+            # Format A: {"NSE_EQ": {"<sid>": {quote_dict}, ...}}
+            if isinstance(data, dict):
+                segment = data.get("NSE_EQ", {})
+                if isinstance(segment, dict):
+                    for sid, q in segment.items():
+                        name = self._id_map.get(str(sid))
+                        if not name:
+                            continue
+                        ltp, vol = self._parse_quote(sid, q)
+                        if ltp > 0:
+                            self._on_tick(name, ltp, vol, ts)
+                    return
+            # Format B: [{"security_id": "...", "last_price": ..., ...}]
+            if isinstance(data, list):
+                for item in data:
+                    if not isinstance(item, dict):
+                        continue
+                    sid  = str(item.get("security_id") or item.get("securityId") or "")
+                    name = self._id_map.get(sid)
+                    if not name:
+                        continue
+                    ltp, vol = self._parse_quote(sid, item)
+                    if ltp > 0:
+                        self._on_tick(name, ltp, vol, ts)
         except Exception as e:
-            logger.debug("Tick parse: %s", e)
+            logger.debug("Poll chunk error: %s", e)
+
+    def _poll(self):
+        sec_ids = list(self._id_map.keys())
+        ts = int(time.time())
+        for i in range(0, len(sec_ids), _CHUNK_SIZE):
+            self._poll_chunk(sec_ids[i:i + _CHUNK_SIZE], ts)
+            if i + _CHUNK_SIZE < len(sec_ids):
+                time.sleep(0.1)  # small gap between chunks
 
     def start(self):
-        instruments = [(_NSE_EQ, s["security_id"], _QUOTE) for s in self._symbols]
+        self._running = True
 
         def _run():
-            backoff = 5
-            while True:
-                try:
-                    logger.info("MarketFeed connecting (%d instruments)...", len(instruments))
-                    self._feed = MarketFeed(
-                        self._ctx, instruments,
-                        version="v2", on_message=self._handle
-                    )
-                    self._feed.run_forever()
-                    backoff = 5  # reset after clean disconnect
-                except Exception as e:
-                    err = str(e)
-                    if "429" in err:
-                        backoff = min(backoff * 2, 300)
-                        logger.error("MarketFeed: rate-limited (429) — retry in %ds", backoff)
-                    else:
-                        backoff = min(int(backoff * 1.5), 60)
-                        logger.error("MarketFeed: %s — retry in %ds", e, backoff)
-                    time.sleep(backoff)
+            logger.info("Live feed started (REST polling every %ds, %d symbols).",
+                        _POLL_INTERVAL, len(self._symbols))
+            while self._running:
+                t0 = time.time()
+                self._poll()
+                elapsed = time.time() - t0
+                wait = max(0.0, _POLL_INTERVAL - elapsed)
+                if wait:
+                    time.sleep(wait)
 
-        self._thread = threading.Thread(target=_run, daemon=True, name="MarketFeed")
+        self._thread = threading.Thread(target=_run, daemon=True, name="LiveFeed")
         self._thread.start()
-        logger.info("Live feed started.")
 
     def stop(self):
-        if self._feed:
-            try:
-                self._feed.close_connection()
-            except Exception:
-                pass
+        self._running = False
