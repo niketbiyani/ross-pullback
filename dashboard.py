@@ -2,13 +2,18 @@
 Flask dashboard with Server-Sent Events for live alert streaming.
 Run via main.py; open http://localhost:5050 in a browser.
 
-Each alert row shows two mini-badges in the Filter column:
+Each alert row shows:
   EMA  green  — episode-level EMA clear (V1 logic)
   EMA  amber  — only W2 fresh-window EMA clear (V2 logic)
   EMA  gray   — EMA was touched, no clear
   RSI  green  — RSI reached extreme from episode start (V1 logic)
   RSI  amber  — RSI reached extreme in W2 fresh window (V2 logic)
   RSI  gray   — no RSI extreme reached
+
+Volume badge (today's cumulative intraday volume vs avg daily):
+  green  — >= 100% of avg daily volume already traded today
+  amber  — 50–100%
+  gray   — < 50% (thin, use caution)
 
 Two greens = V1 quality.  Two ambers (or one green one amber) = V2 quality.
 """
@@ -43,7 +48,7 @@ h1{font-size:15px;color:#60a5fa;letter-spacing:.5px}
 .fb{padding:3px 9px;border:1px solid #374151;border-radius:3px;
     background:#1f2937;color:#9ca3af;cursor:pointer;font-size:11px;font-family:monospace}
 .fb.on{background:#1e3a5f;border-color:#3b82f6;color:#e0e0e0}
-.scroller{overflow-y:auto;height:calc(100vh - 82px)}
+.scroller{overflow-y:auto;height:calc(100vh - 96px)}
 table{width:100%;border-collapse:collapse}
 thead{position:sticky;top:0;background:#0f172a;z-index:5}
 th{padding:7px 10px;text-align:left;color:#6b7280;font-weight:normal;
@@ -57,9 +62,10 @@ tr:hover td{background:#111827}
 /* filter badges */
 .b{display:inline-block;padding:1px 6px;border-radius:3px;
    font-size:10px;font-weight:bold;letter-spacing:.4px;margin-right:3px}
-.bGn{background:#052e16;border:1px solid #166534;color:#4ade80}  /* green  = V1 */
-.bAm{background:#431407;border:1px solid #9a3412;color:#fb923c}  /* amber  = V2 */
-.bGy{background:#111827;border:1px solid #1f2937;color:#374151}  /* gray   = off */
+.bGn{background:#052e16;border:1px solid #166534;color:#4ade80}  /* green  = V1 / strong vol */
+.bAm{background:#431407;border:1px solid #9a3412;color:#fb923c}  /* amber  = V2 / moderate vol */
+.bGy{background:#111827;border:1px solid #1f2937;color:#374151}  /* gray   = off / thin */
+.vpct{font-size:9px;color:#6b7280;margin-left:2px}
 </style>
 </head>
 <body>
@@ -89,6 +95,11 @@ tr:hover td{background:#111827}
   <button class="fb" data-g="tier" data-v="V1">V1 only</button>
   <button class="fb" data-g="tier" data-v="V2">V2 only</button>
   <button class="fb" data-g="tier" data-v="QUAL">V1 + V2</button>
+  <span class="fl" style="margin-left:8px">Vol today:</span>
+  <button class="fb on" data-g="vol" data-v="0">All</button>
+  <button class="fb" data-g="vol" data-v="0.25">25%+</button>
+  <button class="fb" data-g="vol" data-v="0.5">50%+</button>
+  <button class="fb" data-g="vol" data-v="1">100%+</button>
 </div>
 <div class="scroller">
 <table>
@@ -96,14 +107,14 @@ tr:hover td{background:#111827}
 <tr>
   <th>Time</th><th>Symbol</th><th>TF</th><th>Dir</th><th>Wave</th>
   <th>Entry</th><th>SL</th><th>SL%</th><th>RSI@entry</th>
-  <th>EMA &nbsp; RSI</th><th>Ep Bars</th>
+  <th>EMA &nbsp; RSI</th><th>Volume</th><th>Ep Bars</th>
 </tr>
 </thead>
 <tbody id="tb"></tbody>
 </table>
 </div>
 <script>
-const F={dir:'ALL',tf:'0',wave:'0',tier:'ALL'};
+const F={dir:'ALL',tf:'0',wave:'0',tier:'ALL',vol:'0'};
 let alerts=[];
 
 document.querySelectorAll('.fb').forEach(b=>{
@@ -116,22 +127,35 @@ document.querySelectorAll('.fb').forEach(b=>{
   });
 });
 
-/* ---------- badge logic ---------- */
+/* ---------- EMA / RSI badge logic ---------- */
 function emaCls(a){
-  if(a.ema_clear)    return 'bGn';   // green  = V1 episode-level clear
-  if(a.ema_clear_v2) return 'bAm';  // amber  = V2 fresh-window clear
-  return 'bGy';                      // gray   = touched / not clear
+  if(a.ema_clear)    return 'bGn';
+  if(a.ema_clear_v2) return 'bAm';
+  return 'bGy';
 }
 function rsiCls(a){
-  if(a.rsi_extreme)    return 'bGn'; // green  = V1 episode-level extreme
-  if(a.rsi_extreme_v2) return 'bAm';// amber  = V2 fresh-window extreme
-  return 'bGy';                      // gray   = not reached
+  if(a.rsi_extreme)    return 'bGn';
+  if(a.rsi_extreme_v2) return 'bAm';
+  return 'bGy';
 }
 function badges(a){
   return `<span class="b ${emaCls(a)}">EMA</span><span class="b ${rsiCls(a)}">RSI</span>`;
 }
 
-/* ---------- tier for filter button ---------- */
+/* ---------- volume badge ---------- */
+function volBadge(a){
+  const v = a.today_volume || 0;
+  const r = a.rel_volume   || 0;
+  if(v === 0) return '<span class="b bGy">—</span>';
+  const vs = v >= 1e6 ? (v/1e6).toFixed(1)+'M'
+           : v >= 1e3 ? (v/1e3).toFixed(0)+'K'
+           : v.toFixed(0);
+  const cls = r >= 1.0 ? 'bGn' : r >= 0.5 ? 'bAm' : 'bGy';
+  const pct = Math.round(r * 100);
+  return `<span class="b ${cls}">${vs}</span><span class="vpct">${pct}%</span>`;
+}
+
+/* ---------- tier for quality filter ---------- */
 function tier(a){
   if(a.ema_clear && a.rsi_extreme)          return 'V1';
   if(a.ema_clear_v2 && a.rsi_extreme_v2)   return 'V2';
@@ -149,6 +173,8 @@ function ok(a){
   if(F.tier==='V1'&&t!=='V1')return false;
   if(F.tier==='V2'&&t!=='V2')return false;
   if(F.tier==='QUAL'&&t==='raw')return false;
+  const vThresh=parseFloat(F.vol);
+  if(vThresh>0&&(a.rel_volume||0)<vThresh)return false;
   return true;
 }
 
@@ -167,6 +193,7 @@ function render(){
     <td>${a.sl_pct_str}</td>
     <td>${a.rsi_at_entry.toFixed(1)}</td>
     <td>${badges(a)}</td>
+    <td>${volBadge(a)}</td>
     <td style="color:#6b7280">${a.ep_len_so_far}</td>
   </tr>`).join('');
 }

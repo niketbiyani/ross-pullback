@@ -55,6 +55,9 @@ class Alert:
     rsi_extreme_v2: bool
     ep_len_so_far:  int
     ts:             int
+    # Populated by main.py after strategy engine fires (not by strategy engine itself)
+    today_volume:   float = 0.0   # cumulative intraday volume in shares at alert time
+    rel_volume:     float = 0.0   # today_volume / avg_daily_volume (1.0 = 100% of avg)
 
 
 AlertCB = Callable[[Alert], None]

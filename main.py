@@ -15,6 +15,7 @@ import logging
 import sys
 import threading
 import time
+from datetime import date
 
 from dhanhq import DhanContext
 
@@ -50,15 +51,34 @@ def main():
 
     is_live = False   # suppress alerts during bootstrap
 
+    # Live intraday volume tracking — updated in on_bar, read in on_alert
+    today_volumes: dict[str, float] = {}   # symbol -> cumulative shares traded today
+    avg_volumes:   dict[str, float] = {}   # symbol -> avg daily volume from bhavcopy
+
     def on_alert(alert: Alert):
         if is_live:
+            today_vol = today_volumes.get(alert.symbol, 0.0)
+            avg_vol   = avg_volumes.get(alert.symbol, 0.0)
+            alert.today_volume = today_vol
+            alert.rel_volume   = (today_vol / avg_vol) if avg_vol > 0 else 0.0
             alert_mgr.add(alert)
 
     def on_bar(symbol: str, tf: int, bar):
         """
         Called for every closed bar (dict or Bar obj, historical or live).
         Creates state lazily, updates indicators, runs strategy engine.
+        Also accumulates today's intraday volume from 1-min bars.
         """
+        b = bar if isinstance(bar, dict) else bar.__dict__
+
+        # Track today's cumulative volume (1m only to avoid double-counting resampled TFs)
+        if tf == 1:
+            bar_ts = b.get('ts', b.get('timestamp', 0))
+            if date.fromtimestamp(bar_ts) == date.today():
+                today_volumes[symbol] = (
+                    today_volumes.get(symbol, 0.0) + b.get('volume', 0.0)
+                )
+
         key = (symbol, tf)
         if key not in ind_sets:
             ind_sets[key] = IndicatorSet()
@@ -68,7 +88,6 @@ def main():
         if vals is None:
             return   # indicators still warming up
 
-        b = bar if isinstance(bar, dict) else bar.__dict__  # handle both
         rec = BarRecord(
             ts=b.get('ts', b.get('timestamp', 0)),
             open=b.get('open', 0.0), high=b.get('high', 0.0),
@@ -91,15 +110,19 @@ def main():
         daemon=True, name='Dashboard'
     )
     flask_thread.start()
-    time.sleep(1)  # give Flask a moment to bind the port
+    time.sleep(1)
 
     # ── build universe ────────────────────────────────────────────────────────
-    logger.info('Building universe (volume filter ≥ %d shares)...', Config.VOLUME_THRESHOLD)
+    logger.info('Building universe (turnover filter >= ₹%.0fL)...',
+                Config.TURNOVER_THRESHOLD / 1e5)
     symbols = build_universe(ctx)
     if not symbols:
         logger.error('Empty universe — aborting')
         sys.exit(1)
     logger.info('Universe: %d symbols', len(symbols))
+
+    # Populate avg_volumes for relative-volume calculations on live alerts
+    avg_volumes.update({s['symbol']: s.get('avg_daily_volume', 0.0) for s in symbols})
 
     # ── historical bootstrap ──────────────────────────────────────────────────
     bootstrap(ctx, symbols, on_bar)
@@ -108,7 +131,7 @@ def main():
     is_live = True
     logger.info('Live mode active — alerts are now forwarded to dashboard')
 
-    # ── live bar feed (polls intraday_minute_data every 60 s) ─────────────────
+    # ── live bar feed (polls intraday_minute_data every 15 s) ─────────────────
     feed = LiveFeed(ctx, symbols, on_bar)
     feed.start()
 

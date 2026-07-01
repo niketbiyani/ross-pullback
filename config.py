@@ -24,10 +24,18 @@ class Config:
     DHAN_TOTP_SECRET: str  = os.getenv("DHAN_TOTP_SECRET", "")
 
     # Scanner
-    VOLUME_THRESHOLD: int  = int(os.getenv("VOLUME_THRESHOLD", "500000"))
-    HISTORY_DAYS: int      = int(os.getenv("HISTORY_DAYS", "20"))
-    TIMEFRAMES: tuple      = (1, 3, 5, 15)
-    MAX_WORKERS: int       = int(os.getenv("MAX_WORKERS", "1"))
+    HISTORY_DAYS: int          = int(os.getenv("HISTORY_DAYS", "20"))
+    TIMEFRAMES: tuple          = (1, 3, 5, 15)
+    MAX_WORKERS: int           = int(os.getenv("MAX_WORKERS", "1"))
+
+    # Universe filter.  Two gates — both must pass:
+    #   CLOSE_MIN_PRICE: exclude stocks below this price (penny stock filter). ₹100 default.
+    #   TURNOVER_THRESHOLD: avg daily rupee turnover safety net (catches completely
+    #     illiquid names even above ₹100).  Set very low so the dashboard volume
+    #     filter is the real quality gate during the day.
+    CLOSE_MIN_PRICE: float     = float(os.getenv("CLOSE_MIN_PRICE", "100"))
+    TURNOVER_THRESHOLD: float  = float(os.getenv("TURNOVER_THRESHOLD", "1000000"))   # ₹10L
+    VOLUME_HISTORY_DAYS: int   = int(os.getenv("VOLUME_HISTORY_DAYS", "10"))
 
     # Strategy parameters
     EPISODE_MIN_BARS: int  = 8
@@ -39,10 +47,8 @@ class Config:
     DASHBOARD_HOST: str    = os.getenv("SCANNER_HOST", "0.0.0.0")
 
     # Cache
-    UNIVERSE_CACHE: str        = os.path.join(_here, "universe_cache.json")
-    UNIVERSE_MAX_AGE_DAYS: int = int(os.getenv("UNIVERSE_MAX_AGE_DAYS", "7"))
-    VOLUME_HISTORY_DAYS: int   = int(os.getenv("VOLUME_HISTORY_DAYS", "10"))
-    BARS_CACHE_DIR: str        = os.path.join(_here, "bars_cache")
+    UNIVERSE_CACHE: str    = os.path.join(_here, "universe_cache.json")
+    BARS_CACHE_DIR: str    = os.path.join(_here, "bars_cache")
 
     @classmethod
     def validate(cls) -> list[str]:
