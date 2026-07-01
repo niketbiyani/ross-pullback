@@ -72,20 +72,30 @@ def main():
     # Per-minute-slot RVOL trackers — populated after universe build, used in leaderboard
     rvol_trackers: dict[str, RvolTracker] = {}
 
+    # ── price-action state ────────────────────────────────────────────────────
+    today_highs:    dict[str, float] = {}   # running intraday high
+    today_lows:     dict[str, float] = {}   # running intraday low
+    today_opens:    dict[str, float] = {}   # first bar open today
+    avg_daily_ranges: dict[str, float] = {} # avg (high-low)/open % across history days
+
+    # Events tracked live (today only)
+    rolling_bar_ranges: dict[str, deque] = {}  # last 20 bar range %s (consolidation)
+    consol_breaks:      dict[str, dict]  = {}  # latest consolidation break event
+    peak_price_rvols:   dict[str, dict]  = {}  # best price RVOL bar seen today
+    in_play_stocks:     dict[str, dict]  = {}  # stocks with 3%+ opening range
+
+    # Temporary bootstrap accumulator — cleared after finalize
+    _bootstrap_days: dict[str, dict[str, dict]] = {}  # symbol → date → {high,low,open}
+
     # ── leaderboard computation ───────────────────────────────────────────────
 
-    def compute_leaderboard() -> list[dict]:
-        """
-        Rank symbols by Bar RVOL — most recent 1m bar volume vs the historical
-        average for that exact minute slot across prior days.  This catches
-        mid-session spikes immediately (e.g. a 90× bar at 13:09 shows as 90×
-        even if the stock was flat all morning).
+    def _ist_time(ts: int) -> str:
+        m = (ts // 60 + 330) % (24 * 60)
+        return f"{m // 60:02d}:{m % 60:02d}"
 
-        Also includes Cum RVOL = today_vol / (avg_daily × elapsed_fraction),
-        shown as a secondary column on the dashboard.
-        """
+    def compute_leaderboard() -> list[dict]:
         now_ist_min  = (int(time.time()) // 60 + 330) % (24 * 60)
-        elapsed_min  = min(max(now_ist_min - 555, 1), 375)  # clamp to [1, 375]
+        elapsed_min  = min(max(now_ist_min - 555, 1), 375)
         elapsed_frac = elapsed_min / 375.0
 
         rows = []
@@ -98,16 +108,53 @@ def main():
 
             ratio = today_vol / (avg_daily * elapsed_frac)
 
-            # Bar RVOL from the most recent today bar
-            bars     = today_bars.get(symbol)
-            tracker  = rvol_trackers.get(symbol)
+            bars    = today_bars.get(symbol)
+            tracker = rvol_trackers.get(symbol)
+
+            # Bar RVOL — volume spike on most recent bar
             bar_rvol = 0.0
             if bars and tracker:
                 last_b   = bars[-1]
-                bar_rvol = tracker.bar_rvol(
-                    last_b.get('ts', 0),
-                    last_b.get('volume', 0.0),
+                bar_rvol = tracker.bar_rvol(last_b.get('ts', 0), last_b.get('volume', 0.0))
+
+            # Price RVOL — price-range spike on most recent bar
+            price_rvol = 0.0
+            if bars and tracker:
+                last_b     = bars[-1]
+                price_rvol = tracker.bar_price_rvol(
+                    last_b.get('ts', 0), last_b.get('high', 0.0),
+                    last_b.get('low', 0.0), last_b.get('open', 0.0),
                 )
+
+            # Today's intraday range vs historical avg daily range
+            day_range_pct  = 0.0
+            day_range_rvol = 0.0
+            open_p = today_opens.get(symbol, 0.0)
+            if open_p > 0:
+                h = today_highs.get(symbol, 0.0)
+                l = today_lows.get(symbol, 0.0)
+                if h > l > 0:
+                    day_range_pct = round((h - l) / open_p * 100, 2)
+                    avg_dr = avg_daily_ranges.get(symbol, 0.0)
+                    if avg_dr > 0:
+                        day_range_rvol = round(day_range_pct / avg_dr, 2)
+
+            # Peak price RVOL event today (with time)
+            peak_ev   = peak_price_rvols.get(symbol)
+            peak_rvol = peak_ev['rvol']   if peak_ev else 0.0
+            peak_pct  = peak_ev['pct']    if peak_ev else 0.0
+            peak_time = _ist_time(peak_ev['ts']) if peak_ev else ''
+
+            # Consolidation break event (with time)
+            cb_ev     = consol_breaks.get(symbol)
+            cb_ratio  = cb_ev['ratio'] if cb_ev else 0.0
+            cb_pct    = cb_ev['pct']   if cb_ev else 0.0
+            cb_time   = _ist_time(cb_ev['ts']) if cb_ev else ''
+
+            # Opening move / in-play flag (with time)
+            ip_ev     = in_play_stocks.get(symbol)
+            ip_pct    = ip_ev['pct']  if ip_ev else 0.0
+            ip_time   = _ist_time(ip_ev['ts']) if ip_ev else ''
 
             # Buyer/seller split from last ≤10 bars
             buyer_pct = 0.5
@@ -122,14 +169,26 @@ def main():
                     buyer_pct = tb / tv
 
             rows.append({
-                'symbol':     symbol,
-                'bar_rvol':   round(bar_rvol, 1),
-                'ratio':      round(ratio, 2),
-                'today_vol':  round(today_vol),
-                'avg_daily':  round(avg_daily),
-                'elapsed':    elapsed_min,
-                'buyer_pct':  round(buyer_pct, 3),
-                'seller_pct': round(1.0 - buyer_pct, 3),
+                'symbol':        symbol,
+                'bar_rvol':      round(bar_rvol, 1),
+                'price_rvol':    round(price_rvol, 1),
+                'day_range_pct': day_range_pct,
+                'day_range_rvol': day_range_rvol,
+                'avg_day_range': round(avg_daily_ranges.get(symbol, 0.0), 2),
+                'peak_rvol':     peak_rvol,
+                'peak_pct':      peak_pct,
+                'peak_time':     peak_time,
+                'cb_ratio':      cb_ratio,
+                'cb_pct':        cb_pct,
+                'cb_time':       cb_time,
+                'ip_pct':        ip_pct,
+                'ip_time':       ip_time,
+                'ratio':         round(ratio, 2),
+                'today_vol':     round(today_vol),
+                'avg_daily':     round(avg_daily),
+                'elapsed':       elapsed_min,
+                'buyer_pct':     round(buyer_pct, 3),
+                'seller_pct':    round(1.0 - buyer_pct, 3),
             })
 
         rows.sort(key=lambda x: x['bar_rvol'], reverse=True)
@@ -140,10 +199,16 @@ def main():
     def on_alert(alert: Alert):
         today_vol = today_volumes.get(alert.symbol, 0.0)
         avg_vol   = avg_volumes.get(alert.symbol, 0.0)
-        # Only attach live volume context when the alert is from today
+        # Only attach live context when the alert is from today
         if date.fromtimestamp(alert.ts) == date.today():
             alert.today_volume = today_vol
             alert.rel_volume   = (today_vol / avg_vol) if avg_vol > 0 else 0.0
+            open_p = today_opens.get(alert.symbol, 0.0)
+            if open_p > 0:
+                h = today_highs.get(alert.symbol, 0.0)
+                l = today_lows.get(alert.symbol, 0.0)
+                if h > l > 0:
+                    alert.day_range_pct = round((h - l) / open_p * 100, 2)
         alert_mgr.add(alert)
 
     def on_volume_update(symbol: str, bars: list[dict]):
@@ -163,16 +228,83 @@ def main():
         bar_ts = b.get('ts', b.get('timestamp', 0))
 
         if tf == 1:
-            vol = b.get('volume', 0.0)
-            if date.fromtimestamp(bar_ts) == date.today():
+            vol    = b.get('volume', 0.0)
+            high   = b.get('high', 0.0)
+            low    = b.get('low', 0.0)
+            open_p = b.get('open', 0.0)
+            is_today_bar = date.fromtimestamp(bar_ts) == date.today()
+
+            if is_today_bar:
+                # Cumulative volume + recent bars
                 today_volumes[symbol] = today_volumes.get(symbol, 0.0) + vol
                 if symbol not in today_bars:
                     today_bars[symbol] = deque(maxlen=10)
                 today_bars[symbol].append(b)
-            # Feed historical bars to RVOL tracker during bootstrap
+
+                # Intraday OHLC
+                if symbol not in today_opens:
+                    today_opens[symbol] = open_p
+                if high > today_highs.get(symbol, 0.0):
+                    today_highs[symbol] = high
+                if symbol not in today_lows or low < today_lows[symbol]:
+                    today_lows[symbol] = low
+
+                # Bar range %
+                ref = open_p if open_p > 0 else (low if low > 0 else 1.0)
+                bar_range_pct = (high - low) / ref * 100 if (high > low and ref > 0) else 0.0
+
+                # Rolling range window for consolidation detection
+                if symbol not in rolling_bar_ranges:
+                    rolling_bar_ranges[symbol] = deque(maxlen=20)
+                rolling_bar_ranges[symbol].append(bar_range_pct)
+
+                rng_win = rolling_bar_ranges[symbol]
+                if len(rng_win) >= 6 and bar_range_pct >= 0.3:
+                    prev_list = list(rng_win)[:-1]
+                    prev_avg  = sum(prev_list) / len(prev_list)
+                    if prev_avg > 0 and bar_range_pct / prev_avg >= 3.0:
+                        consol_breaks[symbol] = {
+                            'ts':    bar_ts,
+                            'ratio': round(bar_range_pct / prev_avg, 1),
+                            'pct':   round(bar_range_pct, 2),
+                        }
+
+                # Price RVOL for this bar (only after baselines are ready)
+                tracker = rvol_trackers.get(symbol)
+                price_rvol_val = 0.0
+                if tracker and is_live:
+                    price_rvol_val = tracker.bar_price_rvol(bar_ts, high, low, open_p)
+                    existing_peak  = peak_price_rvols.get(symbol)
+                    if price_rvol_val > (existing_peak['rvol'] if existing_peak else 0.0):
+                        peak_price_rvols[symbol] = {
+                            'ts':   bar_ts,
+                            'rvol': round(price_rvol_val, 1),
+                            'pct':  round(bar_range_pct, 2),
+                        }
+
+                # In-play: big opening move in first 10 bars (09:15–09:24)
+                m_ist = (bar_ts // 60 + 330) % (24 * 60)
+                if m_ist - 555 <= 9 and symbol not in in_play_stocks:
+                    op = today_opens.get(symbol, open_p)
+                    if op > 0:
+                        op_range = (today_highs.get(symbol, high) - today_lows.get(symbol, low)) / op * 100
+                        if op_range >= 3.0:
+                            in_play_stocks[symbol] = {'ts': bar_ts, 'pct': round(op_range, 1)}
+            else:
+                # Historical bar — accumulate per-day OHLC for avg daily range
+                if not is_live:
+                    d_str    = str(date.fromtimestamp(bar_ts))
+                    sym_days = _bootstrap_days.setdefault(symbol, {})
+                    if d_str not in sym_days:
+                        sym_days[d_str] = {'high': high, 'low': low, 'open': open_p}
+                    else:
+                        if high > sym_days[d_str]['high']: sym_days[d_str]['high'] = high
+                        if low  < sym_days[d_str]['low']:  sym_days[d_str]['low']  = low
+
+            # Feed to RVOL tracker during bootstrap (volume + price range)
             tracker = rvol_trackers.get(symbol)
             if tracker is not None and not is_live:
-                tracker.add_historical(bar_ts, vol)
+                tracker.add_historical(bar_ts, vol, high, low, open_p)
 
         key = (symbol, tf)
         if key not in ind_sets:
@@ -247,6 +379,17 @@ def main():
     for t in rvol_trackers.values():
         t.finalize()
     logger.info('RVOL baselines ready: %d symbols', len(rvol_trackers))
+
+    # Compute avg daily range % from bootstrap per-day data
+    for sym, days in _bootstrap_days.items():
+        day_ranges = []
+        for d_data in days.values():
+            if d_data['open'] > 0 and d_data['high'] > d_data['low']:
+                day_ranges.append((d_data['high'] - d_data['low']) / d_data['open'] * 100)
+        if day_ranges:
+            avg_daily_ranges[sym] = sum(day_ranges) / len(day_ranges)
+    _bootstrap_days.clear()
+    logger.info('Avg daily range baselines ready: %d symbols', len(avg_daily_ranges))
 
     # If bhavcopy gave us zero avg_daily_volume (column name mismatch etc.),
     # fall back to deriving it from the RVOL tracker: hist_mean × 375 bars/session.

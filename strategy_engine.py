@@ -58,6 +58,7 @@ class Alert:
     # Populated by main.py after strategy engine fires (not by strategy engine itself)
     today_volume:   float = 0.0   # cumulative intraday volume in shares at alert time
     rel_volume:     float = 0.0   # today_volume / avg_daily_volume (1.0 = 100% of avg)
+    day_range_pct:  float = 0.0   # today (high-low)/open % at alert time
 
 
 AlertCB = Callable[[Alert], None]

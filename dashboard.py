@@ -148,6 +148,9 @@ th.sort-on.asc::after{content:' ▲'}
   <span class="fl" style="margin-left:8px">Vol ≥</span>
   <input id="vol-input" type="number" min="0" step="100" value="500" class="num-in">
   <span class="fl">K shares</span>
+  <span class="fl" style="margin-left:8px">Day Rng ≥</span>
+  <input id="range-input" type="number" min="0" step="0.5" value="0" class="num-in">
+  <span class="fl">%</span>
 </div>
 <div class="scroller">
 <table>
@@ -184,16 +187,21 @@ th.sort-on.asc::after{content:' ▲'}
 <div id="lb-scroll">
 <table id="lb-table">
 <thead><tr>
-  <th style="width:28px">#</th>
+  <th style="width:22px">#</th>
   <th class="sortable" data-tbl="lb" data-col="symbol">Symbol</th>
-  <th class="sortable sort-on" data-tbl="lb" data-col="bar_rvol">Bar RVOL</th>
+  <th class="sortable sort-on" data-tbl="lb" data-col="bar_rvol">Vol RVOL</th>
+  <th class="sortable" data-tbl="lb" data-col="price_rvol">Px RVOL</th>
+  <th class="sortable" data-tbl="lb" data-col="day_range_rvol">Day Rng RVOL</th>
+  <th class="sortable" data-tbl="lb" data-col="day_range_pct">Day Rng %</th>
+  <th class="sortable" data-tbl="lb" data-col="peak_rvol">Peak Px RVOL</th>
+  <th class="sortable" data-tbl="lb" data-col="cb_ratio">Consol Break</th>
+  <th class="sortable" data-tbl="lb" data-col="ip_pct">In Play</th>
   <th class="sortable" data-tbl="lb" data-col="ratio">Cum RVOL</th>
   <th class="sortable" data-tbl="lb" data-col="today_vol">Today Vol</th>
-  <th class="sortable" data-tbl="lb" data-col="avg_daily">Avg Daily</th>
-  <th class="sortable" data-tbl="lb" data-col="buyer_pct">Buyers → Sellers</th>
+  <th class="sortable" data-tbl="lb" data-col="buyer_pct">B → S</th>
 </tr></thead>
 <tbody id="lb-tbody">
-  <tr class="lb-empty"><td colspan="7">Waiting for live data…</td></tr>
+  <tr class="lb-empty"><td colspan="12">Waiting for live data…</td></tr>
 </tbody>
 </table>
 </div>
@@ -286,14 +294,34 @@ function renderLeaderboard() {
   }
   tbody.innerHTML = rows.map((r, i) => {
     const bp = Math.round(r.buyer_pct * 100), sp = 100 - bp;
-    const brvol = r.bar_rvol || 0;
+    const brvol = r.bar_rvol    || 0;
+    const prvol = r.price_rvol  || 0;
+    const drvol = r.day_range_rvol || 0;
+    const drpct = r.day_range_pct  || 0;
+    // Peak price RVOL cell
+    const peakStr = r.peak_rvol
+      ? `<span class="${barRvolCls(r.peak_rvol)}">${r.peak_rvol.toFixed(1)}×</span> <span style="color:#4b5563;font-size:10px">@${r.peak_time}</span>`
+      : '<span style="color:#1f2937">—</span>';
+    // Consolidation break cell
+    const cbStr = r.cb_ratio
+      ? `<span class="${barRvolCls(r.cb_ratio)}">${r.cb_ratio.toFixed(1)}×</span> <span style="color:#4b5563;font-size:10px">@${r.cb_time}</span>`
+      : '<span style="color:#1f2937">—</span>';
+    // In-play cell
+    const ipStr = r.ip_pct
+      ? `<span style="color:#4ade80;font-weight:bold">${r.ip_pct.toFixed(1)}%</span> <span style="color:#4b5563;font-size:10px">@${r.ip_time}</span>`
+      : '<span style="color:#1f2937">—</span>';
     return `<tr>
       <td style="color:#4b5563;font-size:10px">${i+1}</td>
       <td><b>${r.symbol}</b></td>
       <td class="${barRvolCls(brvol)}">${brvol.toFixed(1)}×</td>
+      <td class="${barRvolCls(prvol)}">${prvol.toFixed(1)}×</td>
+      <td class="${ratioCls(drvol)}">${drvol > 0 ? drvol.toFixed(2)+'×' : '—'}</td>
+      <td style="color:#9ca3af">${drpct > 0 ? drpct.toFixed(2)+'%' : '—'}</td>
+      <td>${peakStr}</td>
+      <td>${cbStr}</td>
+      <td>${ipStr}</td>
       <td class="${ratioCls(r.ratio)}">${r.ratio.toFixed(2)}×</td>
       <td>${fmtV(r.today_vol)}</td>
-      <td style="color:#4b5563">${fmtV(r.avg_daily)}</td>
       <td>
         <span style="color:#4ade80">${bp}%</span>
         <span class="bs-bar"><span class="bs-b" style="width:${bp}%"></span><span class="bs-s" style="width:${sp}%"></span></span>
@@ -316,7 +344,7 @@ setInterval(fetchLeaderboard, 15000);
 /* ================================================================
    Alerts
    ================================================================ */
-const F = {dir:'ALL', tf:'0', wave:'0', tier:'ALL', vol:'500000'};
+const F = {dir:'ALL', tf:'0', wave:'0', tier:'ALL', vol:'500000', range:'0'};
 let alerts       = [];
 let filteredCount = 0;
 let alertSortCol = 'ts';
@@ -335,6 +363,11 @@ document.querySelectorAll('.fb').forEach(b => {
 document.getElementById('vol-input').addEventListener('input', e => {
   const v = parseFloat(e.target.value);
   F.vol = isNaN(v) ? '0' : String(v * 1000);
+  render();
+});
+document.getElementById('range-input').addEventListener('input', e => {
+  const v = parseFloat(e.target.value);
+  F.range = isNaN(v) ? '0' : String(v);
   render();
 });
 
@@ -366,6 +399,8 @@ function ok(a){
   if (F.tier === 'QUAL' && t === 'raw') return false;
   const vt = parseFloat(F.vol);
   if (vt > 0 && (a.today_volume || 0) < vt) return false;
+  const rt = parseFloat(F.range);
+  if (rt > 0 && (a.day_range_pct || 0) < rt) return false;
   return true;
 }
 function render(){
