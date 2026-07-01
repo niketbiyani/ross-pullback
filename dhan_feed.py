@@ -121,7 +121,7 @@ def bootstrap(dhan_context: DhanContext,
 
 class LiveFeed:
     """
-    Polls Dhan quote_data REST API every 5 s for all symbols and calls
+    Polls Dhan ticker_data REST API every 5 s for all symbols and calls
     on_tick(symbol_name, ltp, day_volume, unix_ts) for each quote.
     Avoids WebSocket connection-rate limits entirely.
     """
@@ -148,16 +148,17 @@ class LiveFeed:
         return 0.0, 0.0
 
     def _poll_chunk(self, chunk: list[str], ts: int):
-        """Fetch quotes for one chunk of security IDs and fire on_tick."""
+        """Fetch LTP for one chunk of security IDs and fire on_tick."""
         try:
-            resp = self._client.quote_data(securities={"NSE_EQ": chunk})
+            resp = self._client.ticker_data(securities={"NSE_EQ": chunk})
             if not self._first_poll_logged:
-                logger.info("First poll response (truncated): %s", str(resp)[:400])
+                logger.info("First poll response: %s", str(resp)[:600])
                 self._first_poll_logged = True
-            if not isinstance(resp, dict):
+            if not isinstance(resp, dict) or resp.get("status") != "success":
+                logger.debug("Poll non-success: %s", str(resp)[:200])
                 return
             data = resp.get("data", {})
-            # Format A: {"NSE_EQ": {"<sid>": {quote_dict}, ...}}
+            # Format A: {"NSE_EQ": {"<sid>": {"LTP": ..., ...}, ...}}
             if isinstance(data, dict):
                 segment = data.get("NSE_EQ", {})
                 if isinstance(segment, dict):
