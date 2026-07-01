@@ -20,6 +20,22 @@ logger = logging.getLogger(__name__)
 
 _LIVE_POLL_INTERVAL = 15   # seconds between live poll cycles
 
+# Global API rate limiter — shared across all bootstrap workers.
+# Caps the total request rate to _MIN_API_GAP seconds between any two API calls,
+# so 16 workers don't flood Dhan's 20 req/s limit.
+_API_LOCK    = threading.Lock()
+_API_LAST: float = 0.0
+_MIN_API_GAP = 0.05   # 1 / 20 req·s⁻¹
+
+
+def _api_throttle():
+    global _API_LAST
+    with _API_LOCK:
+        gap = _MIN_API_GAP - (time.time() - _API_LAST)
+        if gap > 0:
+            time.sleep(gap)
+        _API_LAST = time.time()
+
 
 # ── bar cache (disk) ──────────────────────────────────────────────────────────
 
@@ -74,6 +90,7 @@ def _resample(bars_1m: list[dict], tf: int) -> list[dict]:
 
 def _fetch_day(client: dhanhq, sec: dict, day: str) -> list[dict]:
     """Fetch one day of 1-min bars from the API."""
+    _api_throttle()
     try:
         resp = client.intraday_minute_data(
             security_id=sec["security_id"],
@@ -125,7 +142,6 @@ def _fetch_history(client: dhanhq, sec: dict, n_days: int) -> tuple[list[dict], 
         cache[day] = bars
         api_calls += 1
         changed = True
-        time.sleep(0.08)
 
     # Prune days outside the window
     for day in list(cache.keys()):

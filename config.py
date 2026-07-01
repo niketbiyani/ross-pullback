@@ -24,9 +24,9 @@ class Config:
     DHAN_TOTP_SECRET: str  = os.getenv("DHAN_TOTP_SECRET", "")
 
     # Scanner
-    HISTORY_DAYS: int          = int(os.getenv("HISTORY_DAYS", "20"))
+    HISTORY_DAYS: int          = int(os.getenv("HISTORY_DAYS", "5"))
     TIMEFRAMES: tuple          = (1, 3, 5, 15)
-    MAX_WORKERS: int           = int(os.getenv("MAX_WORKERS", "1"))
+    MAX_WORKERS: int           = int(os.getenv("MAX_WORKERS", "16"))
 
     # Universe filter.  Two gates — both must pass:
     #   CLOSE_MIN_PRICE: exclude stocks below this price (penny stock filter). ₹100 default.

@@ -15,7 +15,7 @@ import logging
 import sys
 import threading
 import time
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from dhanhq import DhanContext
 
@@ -51,6 +51,11 @@ def main():
 
     is_live = False   # suppress alerts during bootstrap
 
+    # Only run strategy engine on the most recent 4 calendar days (~2 trading days).
+    # Earlier bars still flow through IndicatorSet for warmup — just skip episode detection.
+    _cutoff_date      = date.today() - timedelta(days=4)
+    _strategy_cutoff  = int(datetime(_cutoff_date.year, _cutoff_date.month, _cutoff_date.day).timestamp())
+
     # Live intraday volume tracking — updated in on_bar, read in on_alert
     today_volumes: dict[str, float] = {}   # symbol -> cumulative shares traded today
     avg_volumes:   dict[str, float] = {}   # symbol -> avg daily volume from bhavcopy
@@ -69,15 +74,12 @@ def main():
         Creates state lazily, updates indicators, runs strategy engine.
         Also accumulates today's intraday volume from 1-min bars.
         """
-        b = bar if isinstance(bar, dict) else bar.__dict__
+        b      = bar if isinstance(bar, dict) else bar.__dict__
+        bar_ts = b.get('ts', b.get('timestamp', 0))
 
         # Track today's cumulative volume (1m only to avoid double-counting resampled TFs)
-        if tf == 1:
-            bar_ts = b.get('ts', b.get('timestamp', 0))
-            if date.fromtimestamp(bar_ts) == date.today():
-                today_volumes[symbol] = (
-                    today_volumes.get(symbol, 0.0) + b.get('volume', 0.0)
-                )
+        if tf == 1 and date.fromtimestamp(bar_ts) == date.today():
+            today_volumes[symbol] = today_volumes.get(symbol, 0.0) + b.get('volume', 0.0)
 
         key = (symbol, tf)
         if key not in ind_sets:
@@ -88,8 +90,13 @@ def main():
         if vals is None:
             return   # indicators still warming up
 
+        # Old bars: indicator warmup only — skip expensive episode detection.
+        # Last 4 calendar days (~2 trading days) still run the full strategy engine.
+        if bar_ts < _strategy_cutoff:
+            return
+
         rec = BarRecord(
-            ts=b.get('ts', b.get('timestamp', 0)),
+            ts=bar_ts,
             open=b.get('open', 0.0), high=b.get('high', 0.0),
             low=b.get('low', 0.0),   close=b.get('close', 0.0),
             volume=b.get('volume', 0.0),
