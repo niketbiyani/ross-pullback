@@ -117,7 +117,7 @@ def main():
             })
 
         rows.sort(key=lambda x: x['ratio'], reverse=True)
-        return rows[:20]
+        return rows
 
     # ── callbacks ─────────────────────────────────────────────────────────────
 
