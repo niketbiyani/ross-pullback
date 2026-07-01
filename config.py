@@ -39,8 +39,10 @@ class Config:
     DASHBOARD_HOST: str    = os.getenv("SCANNER_HOST", "0.0.0.0")
 
     # Cache
-    UNIVERSE_CACHE: str    = os.path.join(_here, "universe_cache.json")
-    BARS_CACHE_DIR: str    = os.path.join(_here, "bars_cache")
+    UNIVERSE_CACHE: str        = os.path.join(_here, "universe_cache.json")
+    UNIVERSE_MAX_AGE_DAYS: int = int(os.getenv("UNIVERSE_MAX_AGE_DAYS", "7"))
+    VOLUME_HISTORY_DAYS: int   = int(os.getenv("VOLUME_HISTORY_DAYS", "10"))
+    BARS_CACHE_DIR: str        = os.path.join(_here, "bars_cache")
 
     @classmethod
     def validate(cls) -> list[str]:

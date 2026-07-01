@@ -1,7 +1,10 @@
 """
 Builds the scannable NSE equity universe: downloads the Dhan scrip master,
 then filters to symbols with average daily volume >= VOLUME_THRESHOLD.
-Result is cached daily to avoid slow restarts.
+
+Universe is cached for UNIVERSE_MAX_AGE_DAYS (default 7) to avoid a slow
+rebuild on every restart. On rebuild, one API call per symbol fetches all
+VOLUME_HISTORY_DAYS (default 10) at once via a date range query.
 """
 import csv
 import io
@@ -22,12 +25,14 @@ logger = logging.getLogger(__name__)
 SCRIP_URL = "https://images.dhan.co/api-data/api-scrip-master.csv"
 
 
-def _last_trading_day() -> str:
-    """Most recent weekday before today."""
-    d = date.today() - timedelta(days=1)
-    while d.weekday() >= 5:
+def _trading_days_back(n: int) -> list[str]:
+    """Last n weekdays ending yesterday, newest first."""
+    days, d = [], date.today() - timedelta(days=1)
+    while len(days) < n:
+        if d.weekday() < 5:
+            days.append(d.isoformat())
         d -= timedelta(days=1)
-    return d.isoformat()
+    return days
 
 
 def _all_nse_eq() -> list[dict]:
@@ -50,65 +55,77 @@ def _all_nse_eq() -> list[dict]:
     return result
 
 
-def _fetch_vol(client: dhanhq, sec: dict) -> float:
-    """Fetch average daily volume over the last 3 trading days."""
-    days   = [_last_trading_day()]
-    d      = date.fromisoformat(days[0])
-    while len(days) < 3:
-        d -= timedelta(days=1)
-        if d.weekday() < 5:
-            days.append(d.isoformat())
-
-    totals = []
-    for day in days:
-        for attempt in range(2):
-            try:
-                resp = client.intraday_minute_data(
-                    security_id=sec["security_id"],
-                    exchange_segment="NSE_EQ",
-                    instrument_type="EQUITY",
-                    from_date=day,
-                    to_date=day,
-                )
-                if isinstance(resp, dict) and isinstance(resp.get("data"), dict):
-                    vols = resp["data"].get("volume", [])
-                    vol  = sum(float(v) for v in vols if v)
-                    if vol > 0:
-                        totals.append(vol)
+def _fetch_vol(client: dhanhq, sec: dict, from_date: str, to_date: str) -> float:
+    """
+    Fetch average daily volume using a single date-range call covering
+    VOLUME_HISTORY_DAYS. Groups intraday bars by calendar date and averages.
+    Falls back to 0.0 on any failure.
+    """
+    for attempt in range(2):
+        try:
+            resp = client.intraday_minute_data(
+                security_id=sec["security_id"],
+                exchange_segment="NSE_EQ",
+                instrument_type="EQUITY",
+                from_date=from_date,
+                to_date=to_date,
+            )
+            if not isinstance(resp, dict) or not isinstance(resp.get("data"), dict):
                 break
-            except Exception:
-                if attempt == 0:
-                    time.sleep(0.5)
-        time.sleep(0.05)
+            data = resp["data"]
+            tss  = data.get("timestamp", [])
+            vls  = data.get("volume",    [])
 
-    return sum(totals) / len(totals) if totals else 0.0
+            daily: dict[str, float] = {}
+            for i, ts in enumerate(tss):
+                day = date.fromtimestamp(int(ts)).isoformat()
+                vol = float(vls[i]) if i < len(vls) else 0.0
+                daily[day] = daily.get(day, 0.0) + vol
+
+            totals = [v for v in daily.values() if v > 0]
+            return sum(totals) / len(totals) if totals else 0.0
+        except Exception:
+            if attempt == 0:
+                time.sleep(0.5)
+
+    time.sleep(0.05)
+    return 0.0
 
 
 def build_universe(dhan_context: DhanContext) -> list[dict]:
     """
-    Return [{security_id, symbol}] for symbols with yesterday's volume
-    >= Config.VOLUME_THRESHOLD. Caches result daily.
+    Return [{security_id, symbol}] for symbols whose average daily volume
+    over the last VOLUME_HISTORY_DAYS trading days >= VOLUME_THRESHOLD.
+    Result is cached for UNIVERSE_MAX_AGE_DAYS days to avoid repeated rebuilds.
     """
-    today = date.today().isoformat()
     cache = Config.UNIVERSE_CACHE
 
     if os.path.exists(cache):
         try:
             with open(cache) as f:
                 data = json.load(f)
-            if data.get("date") == today:
-                logger.info("Universe: %d symbols (from cache)", len(data["symbols"]))
+            cache_date = date.fromisoformat(data.get("date", "2000-01-01"))
+            age_days   = (date.today() - cache_date).days
+            if age_days < Config.UNIVERSE_MAX_AGE_DAYS:
+                logger.info("Universe: %d symbols (cache %d day(s) old, max %d)",
+                            len(data["symbols"]), age_days, Config.UNIVERSE_MAX_AGE_DAYS)
                 return data["symbols"]
         except Exception:
             pass
 
     logger.info("Building universe — downloading scrip master...")
     all_eq = _all_nse_eq()
-    client  = dhanhq(dhan_context)
+    client = dhanhq(dhan_context)
+
+    days      = _trading_days_back(Config.VOLUME_HISTORY_DAYS)
+    from_date = days[-1]   # oldest
+    to_date   = days[0]    # most recent (yesterday)
+    logger.info("Volume check: %d-day avg  (%s → %s)  for %d symbols",
+                Config.VOLUME_HISTORY_DAYS, from_date, to_date, len(all_eq))
 
     volumes: dict[str, float] = {}
     with ThreadPoolExecutor(max_workers=Config.MAX_WORKERS) as ex:
-        futs = {ex.submit(_fetch_vol, client, s): s for s in all_eq}
+        futs = {ex.submit(_fetch_vol, client, s, from_date, to_date): s for s in all_eq}
         done = 0
         for fut in as_completed(futs):
             sec = futs[fut]
@@ -125,10 +142,10 @@ def build_universe(dhan_context: DhanContext) -> list[dict]:
         s for s in all_eq
         if volumes.get(s["security_id"], 0) >= Config.VOLUME_THRESHOLD
     ]
-    logger.info("Volume filter >=%-d shares: %d / %d symbols pass",
+    logger.info("Volume filter >= %d shares/day: %d / %d symbols pass",
                 Config.VOLUME_THRESHOLD, len(filtered), len(all_eq))
 
     with open(cache, "w") as f:
-        json.dump({"date": today, "symbols": filtered}, f)
+        json.dump({"date": date.today().isoformat(), "symbols": filtered}, f)
 
     return filtered
