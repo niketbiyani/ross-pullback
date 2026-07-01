@@ -42,9 +42,10 @@ class Config:
     SL_MIN_PCT: float      = 0.0015   # 0.15%
     SL_MAX_PCT: float      = 0.030    # 3.0%
 
-    # Live feed: on first poll, only replay this many recent bars per symbol/TF.
-    # Prevents firing thousands of stale alerts from earlier in the day on startup.
-    LIVE_CATCHUP_BARS: int      = int(os.getenv("LIVE_CATCHUP_BARS", "30"))
+    # Live feed: on first poll, replay at most this many recent bars per symbol/TF.
+    # Only applies when bootstrap_last_ts is not seeded (e.g., bare restart with no
+    # bootstrap state).  Set high so a full session (375 bars) is always covered.
+    LIVE_CATCHUP_BARS: int      = int(os.getenv("LIVE_CATCHUP_BARS", "500"))
 
     # RVOL spike detection
     RVOL_SPIKE_THRESHOLD: float = float(os.getenv("RVOL_SPIKE_THRESHOLD", "2.0"))

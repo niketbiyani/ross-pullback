@@ -50,6 +50,9 @@ def main():
     # ── state stores ─────────────────────────────────────────────────────────
     ind_sets: dict[tuple, IndicatorSet]   = {}
     engines:  dict[tuple, StrategyEngine] = {}
+    # Last bar timestamp fed to each strategy engine during bootstrap.
+    # Seeded into LiveFeed._last_ts so the live feed never replays bootstrap bars.
+    bootstrap_last_ts: dict[tuple, int] = {}
 
     is_live = False
 
@@ -119,12 +122,13 @@ def main():
     # ── callbacks ─────────────────────────────────────────────────────────────
 
     def on_alert(alert: Alert):
-        if is_live:
-            today_vol = today_volumes.get(alert.symbol, 0.0)
-            avg_vol   = avg_volumes.get(alert.symbol, 0.0)
+        today_vol = today_volumes.get(alert.symbol, 0.0)
+        avg_vol   = avg_volumes.get(alert.symbol, 0.0)
+        # Only attach live volume context when the alert is from today
+        if date.fromtimestamp(alert.ts) == date.today():
             alert.today_volume = today_vol
             alert.rel_volume   = (today_vol / avg_vol) if avg_vol > 0 else 0.0
-            alert_mgr.add(alert)
+        alert_mgr.add(alert)
 
     def on_volume_update(symbol: str, bars: list[dict]):
         """Called by LiveFeed on every poll with ALL of today's closed 1m bars."""
@@ -175,6 +179,9 @@ def main():
             ema50=vals['ema50'], rsi=vals['rsi'],
         )
         engines[key].update(rec)
+        # Track last bar fed to each engine so the live feed can pick up from here
+        if bar_ts > bootstrap_last_ts.get(key, 0):
+            bootstrap_last_ts[key] = bar_ts
 
     # ── dashboard ─────────────────────────────────────────────────────────────
     def get_debug() -> dict:
@@ -242,6 +249,9 @@ def main():
 
     # ── live feed ─────────────────────────────────────────────────────────────
     feed = LiveFeed(ctx, symbols, on_bar, on_volume_update)
+    # Seed last-seen timestamps so the live feed never replays bootstrap bars
+    feed._last_ts.update(bootstrap_last_ts)
+    logger.info('Live feed seeded with %d bootstrap timestamps', len(bootstrap_last_ts))
     feed.start()
 
     # ── heartbeat ─────────────────────────────────────────────────────────────
