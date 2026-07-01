@@ -126,18 +126,24 @@ def main():
             alert.rel_volume   = (today_vol / avg_vol) if avg_vol > 0 else 0.0
             alert_mgr.add(alert)
 
+    def on_volume_update(symbol: str, bars: list[dict]):
+        """Called by LiveFeed on every poll with ALL of today's closed 1m bars."""
+        total = sum(b.get('volume', 0.0) for b in bars)
+        today_volumes[symbol] = total
+        if bars:
+            if symbol not in today_bars:
+                today_bars[symbol] = deque(maxlen=10)
+            else:
+                today_bars[symbol].clear()
+            for b in bars[-10:]:
+                today_bars[symbol].append(b)
+
     def on_bar(symbol: str, tf: int, bar):
         b      = bar if isinstance(bar, dict) else bar.__dict__
         bar_ts = b.get('ts', b.get('timestamp', 0))
 
         if tf == 1:
             vol = b.get('volume', 0.0)
-            if date.fromtimestamp(bar_ts) == date.today():
-                today_volumes[symbol] = today_volumes.get(symbol, 0.0) + vol
-                # Rolling window for leaderboard (last ≤10 bars today)
-                if symbol not in today_bars:
-                    today_bars[symbol] = deque(maxlen=10)
-                today_bars[symbol].append(b)
             # Feed historical bars to RVOL tracker during bootstrap
             tracker = rvol_trackers.get(symbol)
             if tracker is not None and not is_live:
@@ -205,7 +211,7 @@ def main():
     logger.info('Live mode active — alerts and leaderboard now updating')
 
     # ── live feed ─────────────────────────────────────────────────────────────
-    feed = LiveFeed(ctx, symbols, on_bar)
+    feed = LiveFeed(ctx, symbols, on_bar, on_volume_update)
     feed.start()
 
     # ── heartbeat ─────────────────────────────────────────────────────────────

@@ -205,10 +205,12 @@ class LiveFeed:
 
     def __init__(self, dhan_context: DhanContext,
                  symbols: list[dict],
-                 on_bar: Callable[[str, int, dict], None]):
-        self._client  = dhanhq(dhan_context)
-        self._symbols = symbols
-        self._on_bar  = on_bar
+                 on_bar: Callable[[str, int, dict], None],
+                 on_volume: Callable[[str, list[dict]], None] | None = None):
+        self._client    = dhanhq(dhan_context)
+        self._symbols   = symbols
+        self._on_bar    = on_bar
+        self._on_volume = on_volume
         self._last_ts: dict[tuple, int] = {}   # (symbol, tf) -> last processed ts
         self._running = False
         self._thread: threading.Thread | None = None
@@ -257,6 +259,11 @@ class LiveFeed:
         # Drop the last bar — it may still be forming
         if len(bars_1m) > 1:
             bars_1m = bars_1m[:-1]
+
+        # Volume callback fires with ALL today's bars before the catchup filter
+        # so the leaderboard sees full-session cumulative volume, not just last 30 bars.
+        if self._on_volume is not None:
+            self._on_volume(name, bars_1m)
 
         for tf in [1, 3, 5, 15]:
             bars    = bars_1m if tf == 1 else _resample(bars_1m, tf)
