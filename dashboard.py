@@ -46,32 +46,30 @@ h1{font-size:15px;color:#60a5fa;letter-spacing:.5px}
 #status.live{background:#052e16;color:#4ade80}
 #count{font-size:11px;color:#6b7280;margin-left:auto}
 
-/* ── vol spike hot-box ─────────────────────────────────────────── */
-#hotbox{background:#080d14;border-bottom:2px solid #1f2937;padding:6px 12px 8px}
-#hot-hdr{display:flex;align-items:center;gap:10px;margin-bottom:5px}
+/* ── vol spike section ─────────────────────────────────────────── */
+#hotbox{background:#080d14;border-bottom:2px solid #1f2937}
+#hot-hdr{display:flex;align-items:center;gap:10px;padding:6px 14px 5px;flex-wrap:wrap}
 .hot-title{color:#60a5fa;font-size:11px;font-weight:bold;letter-spacing:.5px;text-transform:uppercase}
 .hot-thresh{font-size:10px;color:#6b7280;background:#1f2937;padding:1px 6px;border-radius:2px}
-#hot-count{font-size:10px;color:#6b7280;margin-left:auto}
-#hot-cards{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px;min-height:96px;
-           align-items:flex-start}
-#hot-cards::-webkit-scrollbar{height:3px}
-#hot-cards::-webkit-scrollbar-thumb{background:#374151;border-radius:2px}
-.hc{background:#0f172a;border:1px solid #1f2937;border-radius:5px;
-    padding:6px 10px;min-width:155px;max-width:155px;flex-shrink:0;cursor:default;
-    transition:border-color .15s}
-.hc:hover{border-color:#3b82f6}
-.hc-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px}
-.hc-sym{font-size:12px;font-weight:bold;color:#e0e0e0}
-.hc-time{font-size:9px;color:#4b5563}
-.hc-mid{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px}
-.hc-price{font-size:10px;color:#94a3b8}
-.hc-rvol{font-size:15px;font-weight:bold}
-.hc-bar{height:5px;background:#1e293b;border-radius:3px;overflow:hidden;margin-bottom:3px;display:flex}
-.hc-buy{background:#4ade80}
-.hc-sell{background:#f87171}
-.hc-pct{font-size:9px;color:#4b5563;display:flex;justify-content:space-between}
-.hc-vol{font-size:9px;color:#374151;margin-top:3px}
-.hot-empty{color:#1f2937;font-size:11px;padding:30px 8px;align-self:center}
+#hot-count{font-size:10px;color:#6b7280}
+.hot-explain{font-size:10px;color:#374151;margin-left:auto}
+#hot-scroll{max-height:140px;overflow-y:auto}
+#hot-scroll::-webkit-scrollbar{width:3px}
+#hot-scroll::-webkit-scrollbar-thumb{background:#1f2937}
+#hot-table{width:100%;border-collapse:collapse}
+#hot-table th{padding:4px 10px;color:#4b5563;font-weight:normal;font-size:10px;
+              border-bottom:1px solid #0f172a;white-space:nowrap;background:#080d14;
+              position:sticky;top:0}
+#hot-table td{padding:4px 10px;border-bottom:1px solid #0a0f18;white-space:nowrap;font-size:11px}
+#hot-table tr:hover td{background:#0c1420}
+.rvol-hi{color:#4ade80;font-weight:bold}
+.rvol-md{color:#fb923c;font-weight:bold}
+.rvol-lo{color:#9ca3af}
+.bs-bar{display:inline-block;width:60px;height:6px;background:#1e293b;
+        border-radius:3px;overflow:hidden;vertical-align:middle;margin:0 4px}
+.bs-b{display:inline-block;height:100%;background:#4ade80;float:left}
+.bs-s{display:inline-block;height:100%;background:#f87171;float:right}
+.hot-empty-row td{color:#1f2937;font-size:11px;padding:18px 10px;text-align:center}
 
 /* ── filters ───────────────────────────────────────────────────── */
 #filters{padding:6px 16px;background:#0f172a;border-bottom:1px solid #1f2937;
@@ -110,14 +108,27 @@ tr:hover td{background:#111827}
   <span id="count"></span>
 </header>
 
-<!-- ── Vol Spikes hot-box ───────────────────────────────────────── -->
+<!-- ── Vol Spikes table ──────────────────────────────────────────── -->
 <div id="hotbox">
   <div id="hot-hdr">
     <span class="hot-title">Vol Spikes</span>
     <span class="hot-thresh" id="hot-thresh"></span>
     <span id="hot-count">0 spikes</span>
+    <span class="hot-explain">RVOL = this bar's volume ÷ avg volume at the same minute of day (5-day history)</span>
   </div>
-  <div id="hot-cards"><span class="hot-empty">No spikes yet — waiting for market open</span></div>
+  <div id="hot-scroll">
+    <table id="hot-table">
+      <thead><tr>
+        <th>Time</th><th>Symbol</th><th>Price</th>
+        <th>RVOL <span style="font-weight:normal;color:#1f2937">× usual</span></th>
+        <th>This bar</th><th>Usual/min</th>
+        <th>Buyers → Sellers</th>
+      </tr></thead>
+      <tbody id="hot-tbody">
+        <tr class="hot-empty-row"><td colspan="7">No spikes yet — waiting for market open</td></tr>
+      </tbody>
+    </table>
+  </div>
 </div>
 
 <!-- ── MACD Alert filters ────────────────────────────────────────── -->
@@ -138,10 +149,10 @@ tr:hover td{background:#111827}
   <button class="fb" data-g="wave" data-v="2">W2</button>
   <button class="fb" data-g="wave" data-v="3">W3+</button>
   <span class="fl" style="margin-left:8px">Quality:</span>
-  <button class="fb on" data-g="tier" data-v="ALL">All</button>
+  <button class="fb" data-g="tier" data-v="ALL">All</button>
   <button class="fb" data-g="tier" data-v="V1">V1 only</button>
   <button class="fb" data-g="tier" data-v="V2">V2 only</button>
-  <button class="fb" data-g="tier" data-v="QUAL">V1 + V2</button>
+  <button class="fb on" data-g="tier" data-v="QUAL">V1 + V2</button>
   <span class="fl" style="margin-left:8px">Vol ≥</span>
   <input id="vol-input" type="number" min="0" max="999" value="50"
          style="width:58px;padding:2px 6px;background:#1f2937;border:1px solid #374151;
@@ -167,7 +178,7 @@ tr:hover td{background:#111827}
 /* ================================================================
    MACD Alerts
    ================================================================ */
-const F={dir:'ALL',tf:'0',wave:'0',tier:'ALL',vol:'0.5'};
+const F={dir:'ALL',tf:'0',wave:'0',tier:'QUAL',vol:'0.5'};
 let alerts=[];
 
 document.querySelectorAll('.fb').forEach(b=>{
@@ -256,39 +267,37 @@ let volSpikes=[];
 const HOT_MAX_AGE_MS = 45 * 60 * 1000;   // keep spikes for 45 min
 
 function fmtV(v){
-  return v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(0)+'K':v.toFixed(0);
+  return v>=1e6?(v/1e6).toFixed(2)+'M':v>=1e3?(v/1e3).toFixed(1)+'K':v.toFixed(0);
 }
-function rvolColor(r){
-  return r>=5?'#4ade80':r>=3?'#fb923c':'#9ca3af';
-}
+function rvolCls(r){return r>=5?'rvol-hi':r>=3?'rvol-md':'rvol-lo';}
 function renderHot(){
   const now=Date.now();
   const rows=volSpikes
     .filter(s=>(now - s.ts*1000) < HOT_MAX_AGE_MS)
     .sort((a,b)=>b.ts-a.ts)
-    .slice(0,60);
+    .slice(0,80);
   document.getElementById('hot-count').textContent=rows.length+' spike'+(rows.length===1?'':'s');
-  const el=document.getElementById('hot-cards');
+  const tbody=document.getElementById('hot-tbody');
   if(!rows.length){
-    el.innerHTML='<span class="hot-empty">No spikes yet — waiting for market open</span>';
+    tbody.innerHTML='<tr class="hot-empty-row"><td colspan="7">No spikes yet — waiting for market open</td></tr>';
     return;
   }
-  el.innerHTML=rows.map(s=>{
+  tbody.innerHTML=rows.map(s=>{
     const bp=Math.round(s.buyer_pct*100);
     const sp=100-bp;
-    return `<div class="hc">
-      <div class="hc-top"><b class="hc-sym">${s.symbol}</b><span class="hc-time">${s.time_ist}</span></div>
-      <div class="hc-mid">
-        <span class="hc-price">₹${s.close.toFixed(2)}</span>
-        <span class="hc-rvol" style="color:${rvolColor(s.rvol)}">${s.rvol.toFixed(1)}×</span>
-      </div>
-      <div class="hc-bar">
-        <div class="hc-buy" style="width:${bp}%"></div>
-        <div class="hc-sell" style="width:${sp}%"></div>
-      </div>
-      <div class="hc-pct"><span style="color:#4ade80">B ${bp}%</span><span style="color:#f87171">S ${sp}%</span></div>
-      <div class="hc-vol">${fmtV(s.volume)} / ${fmtV(s.avg_volume)} avg</div>
-    </div>`;
+    return `<tr>
+      <td style="color:#6b7280">${s.time_ist}</td>
+      <td><b>${s.symbol}</b></td>
+      <td style="color:#94a3b8">₹${s.close.toFixed(2)}</td>
+      <td class="${rvolCls(s.rvol)}">${s.rvol.toFixed(1)}×</td>
+      <td>${fmtV(s.volume)}</td>
+      <td style="color:#4b5563">${fmtV(s.avg_volume)}</td>
+      <td>
+        <span style="color:#4ade80">${bp}%</span>
+        <span class="bs-bar"><span class="bs-b" style="width:${bp}%"></span><span class="bs-s" style="width:${sp}%"></span></span>
+        <span style="color:#f87171">${sp}%</span>
+      </td>
+    </tr>`;
   }).join('');
 }
 fetch('./api/vol-spikes').then(r=>r.json()).then(d=>{volSpikes=d;renderHot();});
