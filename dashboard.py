@@ -102,6 +102,13 @@ h1{font-size:15px;color:#60a5fa;letter-spacing:.5px}
 .bs-b{display:inline-block;height:100%;background:#4ade80;float:left}
 .bs-s{display:inline-block;height:100%;background:#f87171;float:right}
 .lb-empty td{color:#1f2937;font-size:11px;padding:18px 10px;text-align:center}
+
+/* ── Sortable column headers ──────────────────────────────────────── */
+th.sortable{cursor:pointer;user-select:none}
+th.sortable:hover{color:#9ca3af}
+th.sort-on{color:#60a5fa}
+th.sort-on::after{content:' ▼';font-size:8px;vertical-align:middle}
+th.sort-on.asc::after{content:' ▲'}
 </style>
 </head>
 <body>
@@ -145,9 +152,19 @@ h1{font-size:15px;color:#60a5fa;letter-spacing:.5px}
 <div class="scroller">
 <table>
 <thead><tr>
-  <th>Date</th><th>Time</th><th>Symbol</th><th>TF</th><th>Dir</th><th>Wave</th>
-  <th>Entry</th><th>SL</th><th>SL%</th><th>RSI@entry</th>
-  <th>EMA &nbsp; RSI</th><th>Volume</th><th>Ep Bars</th>
+  <th class="sortable" data-tbl="alert" data-col="ts">Date</th>
+  <th class="sortable sort-on" data-tbl="alert" data-col="ts">Time</th>
+  <th class="sortable" data-tbl="alert" data-col="symbol">Symbol</th>
+  <th class="sortable" data-tbl="alert" data-col="tf">TF</th>
+  <th class="sortable" data-tbl="alert" data-col="direction">Dir</th>
+  <th class="sortable" data-tbl="alert" data-col="wave_num">Wave</th>
+  <th class="sortable" data-tbl="alert" data-col="entry_price">Entry</th>
+  <th>SL</th>
+  <th class="sortable" data-tbl="alert" data-col="sl_pct">SL%</th>
+  <th class="sortable" data-tbl="alert" data-col="rsi_at_entry">RSI@entry</th>
+  <th>EMA &nbsp; RSI</th>
+  <th class="sortable" data-tbl="alert" data-col="today_volume">Volume</th>
+  <th class="sortable" data-tbl="alert" data-col="ep_len_so_far">Ep Bars</th>
 </tr></thead>
 <tbody id="tb"></tbody>
 </table>
@@ -168,12 +185,12 @@ h1{font-size:15px;color:#60a5fa;letter-spacing:.5px}
 <table id="lb-table">
 <thead><tr>
   <th style="width:28px">#</th>
-  <th>Symbol</th>
-  <th>Bar RVOL</th>
-  <th>Cum RVOL</th>
-  <th>Today Vol</th>
-  <th>Avg Daily</th>
-  <th>Buyers → Sellers</th>
+  <th class="sortable" data-tbl="lb" data-col="symbol">Symbol</th>
+  <th class="sortable sort-on" data-tbl="lb" data-col="bar_rvol">Bar RVOL</th>
+  <th class="sortable" data-tbl="lb" data-col="ratio">Cum RVOL</th>
+  <th class="sortable" data-tbl="lb" data-col="today_vol">Today Vol</th>
+  <th class="sortable" data-tbl="lb" data-col="avg_daily">Avg Daily</th>
+  <th class="sortable" data-tbl="lb" data-col="buyer_pct">Buyers → Sellers</th>
 </tr></thead>
 <tbody id="lb-tbody">
   <tr class="lb-empty"><td colspan="7">Waiting for live data…</td></tr>
@@ -201,6 +218,43 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 });
 
 /* ================================================================
+   Shared sort helpers
+   ================================================================ */
+function applySort(rows, col, dir) {
+  return [...rows].sort((a, b) => {
+    const va = a[col] ?? '';
+    const vb = b[col] ?? '';
+    if (typeof va === 'string') return dir * va.localeCompare(vb);
+    return dir * (va - vb);
+  });
+}
+function markSortHeader(tbl, col, dir) {
+  document.querySelectorAll(`th.sortable[data-tbl="${tbl}"]`).forEach(th => {
+    th.classList.remove('sort-on', 'asc');
+    if (th.dataset.col === col) {
+      th.classList.add('sort-on');
+      if (dir === 1) th.classList.add('asc');
+    }
+  });
+}
+document.querySelectorAll('th.sortable').forEach(th => {
+  th.addEventListener('click', () => {
+    const tbl = th.dataset.tbl, col = th.dataset.col;
+    if (tbl === 'lb') {
+      lbSortDir = (lbSortCol === col) ? -lbSortDir : -1;
+      lbSortCol = col;
+      markSortHeader('lb', lbSortCol, lbSortDir);
+      renderLeaderboard();
+    } else {
+      alertSortDir = (alertSortCol === col) ? -alertSortDir : -1;
+      alertSortCol = col;
+      markSortHeader('alert', alertSortCol, alertSortDir);
+      render();
+    }
+  });
+});
+
+/* ================================================================
    Rel Vol leaderboard
    ================================================================ */
 function fmtV(v){
@@ -209,8 +263,11 @@ function fmtV(v){
 function ratioCls(r){return r>=5?'ratio-hi':r>=2?'ratio-md':'ratio-lo';}
 function barRvolCls(r){return r>=10?'ratio-hi':r>=2?'ratio-md':'ratio-lo';}
 
-let lbData = [];
-let lbMinVol = 500000;
+let lbData    = [];
+let lbMinVol  = 500000;
+let lbSortCol = 'bar_rvol';
+let lbSortDir = -1;
+markSortHeader('lb', lbSortCol, lbSortDir);
 
 document.getElementById('lb-vol-input').addEventListener('input', e => {
   lbMinVol = (parseFloat(e.target.value) || 0) * 1000;
@@ -219,7 +276,8 @@ document.getElementById('lb-vol-input').addEventListener('input', e => {
 
 function renderLeaderboard() {
   if (currentTab !== 'rvol') return;
-  const rows = lbData.filter(r => r.today_vol >= lbMinVol);
+  const filtered = lbData.filter(r => r.today_vol >= lbMinVol);
+  const rows = applySort(filtered, lbSortCol, lbSortDir);
   document.getElementById('lb-count').textContent = rows.length + ' symbols';
   const tbody = document.getElementById('lb-tbody');
   if (!rows.length) {
@@ -259,8 +317,11 @@ setInterval(fetchLeaderboard, 15000);
    Alerts
    ================================================================ */
 const F = {dir:'ALL', tf:'0', wave:'0', tier:'ALL', vol:'500000'};
-let alerts = [];
+let alerts       = [];
 let filteredCount = 0;
+let alertSortCol = 'ts';
+let alertSortDir = -1;
+markSortHeader('alert', alertSortCol, alertSortDir);
 
 document.querySelectorAll('.fb').forEach(b => {
   b.addEventListener('click', () => {
@@ -310,7 +371,7 @@ function ok(a){
 function render(){
   const scroller = document.querySelector('.scroller');
   const savedTop = scroller.scrollTop;
-  const rows = alerts.filter(ok).sort((a, b) => b.ts - a.ts);
+  const rows = applySort(alerts.filter(ok), alertSortCol, alertSortDir);
   filteredCount = rows.length;
   if (currentTab === 'alerts')
     document.getElementById('count').textContent = filteredCount + ' alerts';
