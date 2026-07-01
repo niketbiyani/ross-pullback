@@ -27,7 +27,7 @@ class Config:
     VOLUME_THRESHOLD: int  = int(os.getenv("VOLUME_THRESHOLD", "500000"))
     HISTORY_DAYS: int      = int(os.getenv("HISTORY_DAYS", "20"))
     TIMEFRAMES: tuple      = (1, 3, 5, 15)
-    MAX_WORKERS: int       = int(os.getenv("MAX_WORKERS", "5"))
+    MAX_WORKERS: int       = int(os.getenv("MAX_WORKERS", "1"))
 
     # Strategy parameters
     EPISODE_MIN_BARS: int  = 8
