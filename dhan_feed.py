@@ -183,7 +183,7 @@ class LiveFeed:
                     if ltp > 0:
                         self._on_tick(name, ltp, vol, ts)
         except Exception as e:
-            logger.debug("Poll chunk error: %s", e)
+            logger.error("Poll chunk error: %s", e)
 
     def _poll(self):
         sec_ids = list(self._id_map.keys())
