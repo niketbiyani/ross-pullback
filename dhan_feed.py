@@ -167,6 +167,7 @@ class LiveFeed:
         instruments = [(_NSE_EQ, s["security_id"], _QUOTE) for s in self._symbols]
 
         def _run():
+            backoff = 5
             while True:
                 try:
                     logger.info("MarketFeed connecting (%d instruments)...", len(instruments))
@@ -175,9 +176,16 @@ class LiveFeed:
                         version="v2", on_message=self._handle
                     )
                     self._feed.run_forever()
+                    backoff = 5  # reset after clean disconnect
                 except Exception as e:
-                    logger.error("MarketFeed: %s — retry in 5s", e)
-                    time.sleep(5)
+                    err = str(e)
+                    if "429" in err:
+                        backoff = min(backoff * 2, 300)
+                        logger.error("MarketFeed: rate-limited (429) — retry in %ds", backoff)
+                    else:
+                        backoff = min(int(backoff * 1.5), 60)
+                        logger.error("MarketFeed: %s — retry in %ds", e, backoff)
+                    time.sleep(backoff)
 
         self._thread = threading.Thread(target=_run, daemon=True, name="MarketFeed")
         self._thread.start()
