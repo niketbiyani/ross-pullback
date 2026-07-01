@@ -123,6 +123,9 @@ def main():
         if agg:
             agg.on_tick(ltp, day_volume, ts)
 
+    feed = LiveFeed(ctx, symbols, on_tick)
+    feed.start()
+
     # ── heartbeat ─────────────────────────────────────────────────────────────
     try:
         while True:
