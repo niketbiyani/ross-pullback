@@ -2,10 +2,15 @@
 Flask dashboard with Server-Sent Events for live alert streaming.
 Run via main.py; open http://localhost:5050 in a browser.
 
-Filter badge in the Filter column:
-  V1 (green)  — passes episode-level EMA clear + RSI extreme
-  V2 (amber)  — passes W2 fresh-window check only (V2 logic extra trades)
-  —  (gray)   — raw alert, no filter quality confirmed
+Each alert row shows two mini-badges in the Filter column:
+  EMA  green  — episode-level EMA clear (V1 logic)
+  EMA  amber  — only W2 fresh-window EMA clear (V2 logic)
+  EMA  gray   — EMA was touched, no clear
+  RSI  green  — RSI reached extreme from episode start (V1 logic)
+  RSI  amber  — RSI reached extreme in W2 fresh window (V2 logic)
+  RSI  gray   — no RSI extreme reached
+
+Two greens = V1 quality.  Two ambers (or one green one amber) = V2 quality.
 """
 import json
 import logging
@@ -49,16 +54,12 @@ tr:hover td{background:#111827}
 .new td{animation:hl 2s ease-out}
 .SHORT{color:#f87171}.LONG{color:#4ade80}
 .WN{color:#94a3b8}.tf{color:#38bdf8}
-/* tier badges */
-.bV1{display:inline-block;padding:1px 7px;border-radius:3px;
-     background:#052e16;border:1px solid #166534;color:#4ade80;
-     font-size:11px;font-weight:bold;letter-spacing:.5px}
-.bV2{display:inline-block;padding:1px 7px;border-radius:3px;
-     background:#431407;border:1px solid #9a3412;color:#fb923c;
-     font-size:11px;font-weight:bold;letter-spacing:.5px}
-.bRW{display:inline-block;padding:1px 7px;border-radius:3px;
-     background:#111827;border:1px solid #374151;color:#6b7280;
-     font-size:11px}
+/* filter badges */
+.b{display:inline-block;padding:1px 6px;border-radius:3px;
+   font-size:10px;font-weight:bold;letter-spacing:.4px;margin-right:3px}
+.bGn{background:#052e16;border:1px solid #166534;color:#4ade80}  /* green  = V1 */
+.bAm{background:#431407;border:1px solid #9a3412;color:#fb923c}  /* amber  = V2 */
+.bGy{background:#111827;border:1px solid #1f2937;color:#374151}  /* gray   = off */
 </style>
 </head>
 <body>
@@ -83,7 +84,7 @@ tr:hover td{background:#111827}
   <button class="fb" data-g="wave" data-v="1">W1</button>
   <button class="fb" data-g="wave" data-v="2">W2</button>
   <button class="fb" data-g="wave" data-v="3">W3+</button>
-  <span class="fl" style="margin-left:8px">Filter:</span>
+  <span class="fl" style="margin-left:8px">Quality:</span>
   <button class="fb on" data-g="tier" data-v="ALL">All</button>
   <button class="fb" data-g="tier" data-v="V1">V1 only</button>
   <button class="fb" data-g="tier" data-v="V2">V2 only</button>
@@ -95,7 +96,7 @@ tr:hover td{background:#111827}
 <tr>
   <th>Time</th><th>Symbol</th><th>TF</th><th>Dir</th><th>Wave</th>
   <th>Entry</th><th>SL</th><th>SL%</th><th>RSI@entry</th>
-  <th>Filter</th><th>Ep Bars</th>
+  <th>EMA &nbsp; RSI</th><th>Ep Bars</th>
 </tr>
 </thead>
 <tbody id="tb"></tbody>
@@ -115,19 +116,29 @@ document.querySelectorAll('.fb').forEach(b=>{
   });
 });
 
+/* ---------- badge logic ---------- */
+function emaCls(a){
+  if(a.ema_clear)    return 'bGn';   // green  = V1 episode-level clear
+  if(a.ema_clear_v2) return 'bAm';  // amber  = V2 fresh-window clear
+  return 'bGy';                      // gray   = touched / not clear
+}
+function rsiCls(a){
+  if(a.rsi_extreme)    return 'bGn'; // green  = V1 episode-level extreme
+  if(a.rsi_extreme_v2) return 'bAm';// amber  = V2 fresh-window extreme
+  return 'bGy';                      // gray   = not reached
+}
+function badges(a){
+  return `<span class="b ${emaCls(a)}">EMA</span><span class="b ${rsiCls(a)}">RSI</span>`;
+}
+
+/* ---------- tier for filter button ---------- */
 function tier(a){
-  if(a.ema_clear && a.rsi_extreme)           return 'V1';
-  if(a.ema_clear_v2 && a.rsi_extreme_v2)    return 'V2';
+  if(a.ema_clear && a.rsi_extreme)          return 'V1';
+  if(a.ema_clear_v2 && a.rsi_extreme_v2)   return 'V2';
   return 'raw';
 }
 
-function badge(a){
-  const t=tier(a);
-  if(t==='V1') return '<span class="bV1">V1</span>';
-  if(t==='V2') return '<span class="bV2">V2</span>';
-  return '<span class="bRW">—</span>';
-}
-
+/* ---------- row filter ---------- */
 function ok(a){
   if(F.dir!=='ALL'&&a.direction!==F.dir)return false;
   if(F.tf!=='0'&&String(a.tf)!==F.tf)return false;
@@ -155,7 +166,7 @@ function render(){
     <td>${a.sl_level.toFixed(2)}</td>
     <td>${a.sl_pct_str}</td>
     <td>${a.rsi_at_entry.toFixed(1)}</td>
-    <td>${badge(a)}</td>
+    <td>${badges(a)}</td>
     <td style="color:#6b7280">${a.ep_len_so_far}</td>
   </tr>`).join('');
 }
