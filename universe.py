@@ -120,8 +120,10 @@ def _download_bhavcopy(d: date, session: requests.Session) -> dict[str, dict]:
                 if not sym or series not in ('EQ', 'BE'):
                     continue
                 try:
-                    vol   = float(row.get('TOTTRDQTY') or row.get('TtlTrdQty') or 0)
-                    val   = float(row.get('TOTTRDVAL') or row.get('TtlTrdVal') or 0)
+                    vol   = float(row.get('TOTTRDQTY') or row.get('TtlTrdQty') or
+                                  row.get('TtlTradgVol') or 0)
+                    val   = float(row.get('TOTTRDVAL') or row.get('TtlTrdVal') or
+                                  row.get('TtlTrfVal') or 0)
                     close = float(row.get('CLOSE') or row.get('ClsPric') or
                                   row.get('LAST')  or row.get('LastPric') or 0)
                 except (ValueError, TypeError):
