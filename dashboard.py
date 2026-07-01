@@ -15,10 +15,10 @@ Bottom section — MACD Alerts table:
   RSI  amber  — RSI reached extreme in W2 fresh window (V2 logic)
   RSI  gray   — no RSI extreme reached
 
-Volume badge on alert rows (today's cumulative intraday vs avg daily):
-  green  — >= 100% of avg daily volume already traded today
-  amber  — 50–100%
-  gray   — < 50% (thin, use caution)
+Volume badge on alert rows (today's cumulative intraday volume at alert time):
+  green  — >= 500K shares
+  amber  — < 500K shares but non-zero
+  gray   — no today volume data (historical bootstrap signal)
 """
 import json
 import logging
@@ -156,10 +156,10 @@ tr:hover td{background:#111827}
   <button class="fb" data-g="tier" data-v="V2">V2 only</button>
   <button class="fb" data-g="tier" data-v="QUAL">V1 + V2</button>
   <span class="fl" style="margin-left:8px">Vol ≥</span>
-  <input id="vol-input" type="number" min="0" max="999" value="50"
-         style="width:58px;padding:2px 6px;background:#1f2937;border:1px solid #374151;
+  <input id="vol-input" type="number" min="0" step="100" value="500"
+         style="width:68px;padding:2px 6px;background:#1f2937;border:1px solid #374151;
                 border-radius:3px;color:#e0e0e0;font-size:11px;font-family:monospace">
-  <span class="fl">% avg</span>
+  <span class="fl">K shares</span>
 </div>
 
 <!-- ── MACD Alert table ──────────────────────────────────────────── -->
@@ -221,7 +221,7 @@ setInterval(fetchLeaderboard, 15000);
 /* ================================================================
    MACD Alerts
    ================================================================ */
-const F={dir:'ALL',tf:'0',wave:'0',tier:'ALL',vol:'0.5'};
+const F={dir:'ALL',tf:'0',wave:'0',tier:'ALL',vol:'500000'};
 let alerts=[];
 
 document.querySelectorAll('.fb').forEach(b=>{
@@ -236,7 +236,7 @@ document.querySelectorAll('.fb').forEach(b=>{
 const volInput=document.getElementById('vol-input');
 volInput.addEventListener('input',()=>{
   const v=parseFloat(volInput.value);
-  F.vol=isNaN(v)?'0':String(v/100);
+  F.vol=isNaN(v)?'0':String(v*1000);
   render();
 });
 
@@ -246,11 +246,11 @@ function badges(a){
   return `<span class="b ${emaCls(a)}">EMA</span><span class="b ${rsiCls(a)}">RSI</span>`;
 }
 function volBadge(a){
-  const v=a.today_volume||0, r=a.rel_volume||0;
+  const v=a.today_volume||0;
   if(v===0) return '<span class="b bGy">—</span>';
   const vs=v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(0)+'K':v.toFixed(0);
-  const cls=r>=1.0?'bGn':r>=0.5?'bAm':'bGy';
-  return `<span class="b ${cls}">${vs}</span><span class="vpct">${Math.round(r*100)}%</span>`;
+  const cls=v>=500000?'bGn':'bAm';
+  return `<span class="b ${cls}">${vs}</span>`;
 }
 function tier(a){
   if(a.ema_clear&&a.rsi_extreme) return 'V1';
@@ -268,7 +268,7 @@ function ok(a){
   if(F.tier==='V2'&&t!=='V2') return false;
   if(F.tier==='QUAL'&&t==='raw') return false;
   const vt=parseFloat(F.vol);
-  if(vt>0&&(a.rel_volume||0)<vt) return false;
+  if(vt>0&&(a.today_volume||0)<vt) return false;
   return true;
 }
 function render(){
