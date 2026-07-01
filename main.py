@@ -70,41 +70,47 @@ def main():
 
     def compute_leaderboard() -> list[dict]:
         """
-        Rank all symbols by (rolling avg of last ≤10 1m bars today) ÷ historical mean.
+        Rank symbols by cumulative today volume vs expected volume at this point in
+        the session: ratio = today_vol / (avg_daily_vol × elapsed_fraction).
+        elapsed_fraction = minutes since 9:15 IST / 375 (full session length).
+        A ratio of 5 means "on pace for 5× normal daily volume today."
         Returns top 20, most active first.
         """
+        now_ist_min  = (int(time.time()) // 60 + 330) % (24 * 60)
+        elapsed_min  = max(now_ist_min - 555, 1)   # 555 = 9h15 in minutes
+        elapsed_frac = elapsed_min / 375.0
+
         rows = []
-        for symbol, bars in list(today_bars.items()):
-            if not bars:
+        for symbol, today_vol in list(today_volumes.items()):
+            if today_vol <= 0:
                 continue
-            tracker = rvol_trackers.get(symbol)
-            if tracker is None or tracker.hist_mean == 0.0:
+            avg_daily = avg_volumes.get(symbol, 0.0)
+            if avg_daily <= 0:
                 continue
 
-            total_vol   = 0.0
-            total_buyer = 0.0
-            n = len(bars)
-            for b in bars:
-                vol  = b.get('volume', 0.0)
-                high = b.get('high', 0.0)
-                low  = b.get('low',  0.0)
-                close = b.get('close', 0.0)
-                rng  = max(high - low, 1e-6)
-                total_vol   += vol
-                total_buyer += vol * max(close - low, 0.0) / rng
+            ratio = today_vol / (avg_daily * elapsed_frac)
 
-            rolling_avg = total_vol / n
-            ratio       = rolling_avg / tracker.hist_mean
-            buyer_pct   = total_buyer / max(total_vol, 1e-6)
+            # Buyer/seller split from last ≤10 bars
+            bars      = today_bars.get(symbol)
+            buyer_pct = 0.5
+            if bars:
+                tv = 0.0; tb = 0.0
+                for b in bars:
+                    vol = b.get('volume', 0.0)
+                    rng = max(b.get('high', 0.0) - b.get('low', 0.0), 1e-6)
+                    tv += vol
+                    tb += vol * max(b.get('close', 0.0) - b.get('low', 0.0), 0.0) / rng
+                if tv > 0:
+                    buyer_pct = tb / tv
 
             rows.append({
-                'symbol':      symbol,
-                'ratio':       round(ratio, 2),
-                'rolling_avg': round(rolling_avg),
-                'hist_avg':    round(tracker.hist_mean),
-                'bars':        n,
-                'buyer_pct':   round(buyer_pct, 3),
-                'seller_pct':  round(1.0 - buyer_pct, 3),
+                'symbol':     symbol,
+                'ratio':      round(ratio, 2),
+                'today_vol':  round(today_vol),
+                'avg_daily':  round(avg_daily),
+                'elapsed':    elapsed_min,
+                'buyer_pct':  round(buyer_pct, 3),
+                'seller_pct': round(1.0 - buyer_pct, 3),
             })
 
         rows.sort(key=lambda x: x['ratio'], reverse=True)

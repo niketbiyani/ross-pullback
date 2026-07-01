@@ -3,9 +3,9 @@ Flask dashboard with Server-Sent Events for live alert streaming.
 Run via main.py; open http://localhost:5050 in a browser.
 
 Top section — RVOL Leaderboard:
-  Top 20 stocks ranked by (rolling avg of last ≤10 1m bars today) ÷ historical
-  avg bar volume (5-day pool). Refreshes every 15 s automatically.
-  Shows ratio, rolling avg volume, historical avg, and buyer/seller split.
+  Top 20 stocks ranked by cumulative today volume ÷ (avg daily volume × elapsed
+  session fraction). Equivalent to TradingView Rel Vol. Refreshes every 15 s.
+  A ratio of 5 means on pace for 5× normal daily volume today.
 
 Bottom section — MACD Alerts table:
   EMA  green  — episode-level EMA clear (V1 logic)
@@ -113,7 +113,7 @@ tr:hover td{background:#111827}
 <div id="leaderboard">
   <div id="lb-hdr">
     <span class="lb-title">Relative Volume — Top 20</span>
-    <span class="lb-explain">rolling ≤10 bar avg today ÷ 5-day historical avg/bar</span>
+    <span class="lb-explain">today cumulative vol ÷ (avg daily × session % elapsed)</span>
     <span id="lb-updated"></span>
   </div>
   <div id="lb-scroll">
@@ -121,14 +121,13 @@ tr:hover td{background:#111827}
       <thead><tr>
         <th id="lb-rank">#</th>
         <th>Symbol</th>
-        <th>RVOL</th>
-        <th>Today avg/bar</th>
-        <th>5d avg/bar</th>
-        <th>Window</th>
+        <th>Rel Vol</th>
+        <th>Today Vol</th>
+        <th>Avg Daily</th>
         <th>Buyers → Sellers</th>
       </tr></thead>
       <tbody id="lb-tbody">
-        <tr class="lb-empty"><td colspan="7">Waiting for live data…</td></tr>
+        <tr class="lb-empty"><td colspan="6">Waiting for live data…</td></tr>
       </tbody>
     </table>
   </div>
@@ -184,12 +183,12 @@ tr:hover td{background:#111827}
 function fmtV(v){
   return v>=1e6?(v/1e6).toFixed(2)+'M':v>=1e3?(v/1e3).toFixed(1)+'K':v.toFixed(0);
 }
-function ratioCls(r){return r>=3?'ratio-hi':r>=2?'ratio-md':'ratio-lo';}
+function ratioCls(r){return r>=5?'ratio-hi':r>=2?'ratio-md':'ratio-lo';}
 
 function renderLeaderboard(rows){
   const tbody=document.getElementById('lb-tbody');
   if(!rows||!rows.length){
-    tbody.innerHTML='<tr class="lb-empty"><td colspan="7">No data yet — waiting for market open</td></tr>';
+    tbody.innerHTML='<tr class="lb-empty"><td colspan="6">No data yet — waiting for market open</td></tr>';
     return;
   }
   tbody.innerHTML=rows.map((r,i)=>{
@@ -199,9 +198,8 @@ function renderLeaderboard(rows){
       <td id="lb-rank">${i+1}</td>
       <td><b>${r.symbol}</b></td>
       <td class="${ratioCls(r.ratio)}">${r.ratio.toFixed(2)}×</td>
-      <td>${fmtV(r.rolling_avg)}</td>
-      <td style="color:#4b5563">${fmtV(r.hist_avg)}</td>
-      <td style="color:#4b5563">${r.bars} bar${r.bars===1?'':'s'}</td>
+      <td>${fmtV(r.today_vol)}</td>
+      <td style="color:#4b5563">${fmtV(r.avg_daily)}</td>
       <td>
         <span style="color:#4ade80">${bp}%</span>
         <span class="bs-bar"><span class="bs-b" style="width:${bp}%"></span><span class="bs-s" style="width:${sp}%"></span></span>
