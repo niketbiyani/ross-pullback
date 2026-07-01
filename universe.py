@@ -51,22 +51,37 @@ def _all_nse_eq() -> list[dict]:
 
 
 def _fetch_vol(client: dhanhq, sec: dict) -> float:
-    """Fetch yesterday's total volume for one security."""
-    day = _last_trading_day()
-    try:
-        resp = client.intraday_minute_data(
-            security_id=sec["security_id"],
-            exchange_segment="NSE_EQ",
-            instrument_type="EQUITY",
-            from_date=day,
-            to_date=day,
-        )
-        if isinstance(resp, dict) and isinstance(resp.get("data"), dict):
-            vols = resp["data"].get("volume", [])
-            return sum(float(v) for v in vols if v)
-    except Exception:
-        pass
-    return 0.0
+    """Fetch average daily volume over the last 3 trading days."""
+    days   = [_last_trading_day()]
+    d      = date.fromisoformat(days[0])
+    while len(days) < 3:
+        d -= timedelta(days=1)
+        if d.weekday() < 5:
+            days.append(d.isoformat())
+
+    totals = []
+    for day in days:
+        for attempt in range(2):
+            try:
+                resp = client.intraday_minute_data(
+                    security_id=sec["security_id"],
+                    exchange_segment="NSE_EQ",
+                    instrument_type="EQUITY",
+                    from_date=day,
+                    to_date=day,
+                )
+                if isinstance(resp, dict) and isinstance(resp.get("data"), dict):
+                    vols = resp["data"].get("volume", [])
+                    vol  = sum(float(v) for v in vols if v)
+                    if vol > 0:
+                        totals.append(vol)
+                break
+            except Exception:
+                if attempt == 0:
+                    time.sleep(0.5)
+        time.sleep(0.05)
+
+    return sum(totals) / len(totals) if totals else 0.0
 
 
 def build_universe(dhan_context: DhanContext) -> list[dict]:
