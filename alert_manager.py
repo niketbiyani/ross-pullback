@@ -15,7 +15,7 @@ def _ts_to_ist(ts: int) -> str:
 
 
 class AlertManager:
-    def __init__(self, max_history: int = 1000):
+    def __init__(self, max_history: int = 5000):
         self._lock     = threading.Lock()
         self._history: deque[dict] = deque(maxlen=max_history)
         self._seen:    set[str]    = set()

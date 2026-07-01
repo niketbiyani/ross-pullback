@@ -261,6 +261,10 @@ class LiveFeed:
             bars    = bars_1m if tf == 1 else _resample(bars_1m, tf)
             last_ts = self._last_ts.get((name, tf), 0)
             new_bars = [b for b in bars if b['ts'] > last_ts]
+            # On the very first poll (last_ts==0), skip back-history to avoid
+            # flooding the dashboard with stale alerts from earlier in the session.
+            if last_ts == 0 and len(new_bars) > Config.LIVE_CATCHUP_BARS:
+                new_bars = new_bars[-Config.LIVE_CATCHUP_BARS:]
             for b in new_bars:
                 self._on_bar(name, tf, b)
             if new_bars:

@@ -24,7 +24,7 @@ class Config:
     DHAN_TOTP_SECRET: str  = os.getenv("DHAN_TOTP_SECRET", "")
 
     # Scanner
-    HISTORY_DAYS: int          = int(os.getenv("HISTORY_DAYS", "5"))
+    HISTORY_DAYS: int          = int(os.getenv("HISTORY_DAYS", "20"))
     TIMEFRAMES: tuple          = (1, 3, 5, 15)
     MAX_WORKERS: int           = int(os.getenv("MAX_WORKERS", "32"))
 
@@ -41,6 +41,10 @@ class Config:
     EPISODE_MIN_BARS: int  = 8
     SL_MIN_PCT: float      = 0.0015   # 0.15%
     SL_MAX_PCT: float      = 0.030    # 3.0%
+
+    # Live feed: on first poll, only replay this many recent bars per symbol/TF.
+    # Prevents firing thousands of stale alerts from earlier in the day on startup.
+    LIVE_CATCHUP_BARS: int      = int(os.getenv("LIVE_CATCHUP_BARS", "30"))
 
     # RVOL spike detection
     RVOL_SPIKE_THRESHOLD: float = float(os.getenv("RVOL_SPIKE_THRESHOLD", "3.0"))

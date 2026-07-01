@@ -212,6 +212,8 @@ function ok(a){
   return true;
 }
 function render(){
+  const scroller=document.querySelector('.scroller');
+  const savedScroll=scroller.scrollTop;
   const rows=alerts.filter(ok).sort((a,b)=>b.ts-a.ts);
   document.getElementById('count').textContent=rows.length+' alerts';
   document.getElementById('tb').innerHTML=rows.map((a,i)=>`
@@ -229,6 +231,7 @@ function render(){
     <td>${volBadge(a)}</td>
     <td style="color:#6b7280">${a.ep_len_so_far}</td>
   </tr>`).join('');
+  scroller.scrollTop=savedScroll;
 }
 fetch('./api/alerts').then(r=>r.json()).then(d=>{alerts=d;render();});
 
@@ -286,7 +289,7 @@ es.onerror=()=>{document.getElementById('status').textContent='reconnecting…';
 
 es.addEventListener('alert',e=>{
   alerts.unshift(JSON.parse(e.data));
-  if(alerts.length>1000) alerts.pop();
+  if(alerts.length>5000) alerts.pop();
   render();
 });
 es.addEventListener('vol_spike',e=>{
