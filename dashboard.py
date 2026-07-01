@@ -1,6 +1,11 @@
 """
 Flask dashboard with Server-Sent Events for live alert streaming.
 Run via main.py; open http://localhost:5050 in a browser.
+
+Filter badge in the Filter column:
+  V1 (green)  — passes episode-level EMA clear + RSI extreme
+  V2 (amber)  — passes W2 fresh-window check only (V2 logic extra trades)
+  —  (gray)   — raw alert, no filter quality confirmed
 """
 import json
 import logging
@@ -43,9 +48,17 @@ tr:hover td{background:#111827}
 @keyframes hl{from{background:#0d3321}to{background:transparent}}
 .new td{animation:hl 2s ease-out}
 .SHORT{color:#f87171}.LONG{color:#4ade80}
-.WN{color:#94a3b8}
-.Y{color:#4ade80}.N{color:#f87171}.NA{color:#6b7280}
-.tf{color:#38bdf8}
+.WN{color:#94a3b8}.tf{color:#38bdf8}
+/* tier badges */
+.bV1{display:inline-block;padding:1px 7px;border-radius:3px;
+     background:#052e16;border:1px solid #166534;color:#4ade80;
+     font-size:11px;font-weight:bold;letter-spacing:.5px}
+.bV2{display:inline-block;padding:1px 7px;border-radius:3px;
+     background:#431407;border:1px solid #9a3412;color:#fb923c;
+     font-size:11px;font-weight:bold;letter-spacing:.5px}
+.bRW{display:inline-block;padding:1px 7px;border-radius:3px;
+     background:#111827;border:1px solid #374151;color:#6b7280;
+     font-size:11px}
 </style>
 </head>
 <body>
@@ -70,10 +83,11 @@ tr:hover td{background:#111827}
   <button class="fb" data-g="wave" data-v="1">W1</button>
   <button class="fb" data-g="wave" data-v="2">W2</button>
   <button class="fb" data-g="wave" data-v="3">W3+</button>
-  <span class="fl" style="margin-left:8px">Quality:</span>
-  <button class="fb" data-g="ema" data-v="1">EMA Clear</button>
-  <button class="fb" data-g="rsi" data-v="1">RSI Extreme</button>
-  <button class="fb" data-g="both" data-v="1">Both Filters</button>
+  <span class="fl" style="margin-left:8px">Filter:</span>
+  <button class="fb on" data-g="tier" data-v="ALL">All</button>
+  <button class="fb" data-g="tier" data-v="V1">V1 only</button>
+  <button class="fb" data-g="tier" data-v="V2">V2 only</button>
+  <button class="fb" data-g="tier" data-v="QUAL">V1 + V2</button>
 </div>
 <div class="scroller">
 <table>
@@ -81,32 +95,38 @@ tr:hover td{background:#111827}
 <tr>
   <th>Time</th><th>Symbol</th><th>TF</th><th>Dir</th><th>Wave</th>
   <th>Entry</th><th>SL</th><th>SL%</th><th>RSI@entry</th>
-  <th>EMA Clear</th><th>RSI Extreme</th><th>Ep Bars</th>
+  <th>Filter</th><th>Ep Bars</th>
 </tr>
 </thead>
 <tbody id="tb"></tbody>
 </table>
 </div>
 <script>
-const F={dir:'ALL',tf:'0',wave:'0',ema:'0',rsi:'0',both:'0'};
+const F={dir:'ALL',tf:'0',wave:'0',tier:'ALL'};
 let alerts=[];
 
 document.querySelectorAll('.fb').forEach(b=>{
   b.addEventListener('click',()=>{
     const g=b.dataset.g;
-    // Toggle logic: exclusive within dir/tf/wave groups; toggle for filter groups
-    if(['dir','tf','wave'].includes(g)){
-      document.querySelectorAll(`.fb[data-g="${g}"]`).forEach(x=>x.classList.remove('on'));
-      b.classList.add('on');
-      F[g]=b.dataset.v;
-    } else {
-      b.classList.toggle('on');
-      F[g]=b.classList.contains('on')?'1':'0';
-      if(g==='both'&&F[g]==='1'){F.ema='0';F.rsi='0';}
-    }
+    document.querySelectorAll(`.fb[data-g="${g}"]`).forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');
+    F[g]=b.dataset.v;
     render();
   });
 });
+
+function tier(a){
+  if(a.ema_clear && a.rsi_extreme)           return 'V1';
+  if(a.ema_clear_v2 && a.rsi_extreme_v2)    return 'V2';
+  return 'raw';
+}
+
+function badge(a){
+  const t=tier(a);
+  if(t==='V1') return '<span class="bV1">V1</span>';
+  if(t==='V2') return '<span class="bV2">V2</span>';
+  return '<span class="bRW">—</span>';
+}
 
 function ok(a){
   if(F.dir!=='ALL'&&a.direction!==F.dir)return false;
@@ -114,13 +134,12 @@ function ok(a){
   if(F.wave==='1'&&a.wave_num!==1)return false;
   if(F.wave==='2'&&a.wave_num!==2)return false;
   if(F.wave==='3'&&a.wave_num<3)return false;
-  if(F.ema==='1'&&!a.ema_clear)return false;
-  if(F.rsi==='1'&&!a.rsi_extreme)return false;
-  if(F.both==='1'&&!(a.ema_clear&&a.rsi_extreme))return false;
+  const t=tier(a);
+  if(F.tier==='V1'&&t!=='V1')return false;
+  if(F.tier==='V2'&&t!=='V2')return false;
+  if(F.tier==='QUAL'&&t==='raw')return false;
   return true;
 }
-
-function yn(v){return v?'<span class="Y">YES</span>':'<span class="N">NO</span>';}
 
 function render(){
   const rows=alerts.filter(ok);
@@ -136,8 +155,7 @@ function render(){
     <td>${a.sl_level.toFixed(2)}</td>
     <td>${a.sl_pct_str}</td>
     <td>${a.rsi_at_entry.toFixed(1)}</td>
-    <td>${yn(a.ema_clear)}</td>
-    <td>${yn(a.rsi_extreme)}</td>
+    <td>${badge(a)}</td>
     <td style="color:#6b7280">${a.ep_len_so_far}</td>
   </tr>`).join('');
 }
