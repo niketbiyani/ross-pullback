@@ -149,10 +149,10 @@ tr:hover td{background:#111827}
   <button class="fb" data-g="wave" data-v="2">W2</button>
   <button class="fb" data-g="wave" data-v="3">W3+</button>
   <span class="fl" style="margin-left:8px">Quality:</span>
-  <button class="fb" data-g="tier" data-v="ALL">All</button>
+  <button class="fb on" data-g="tier" data-v="ALL">All</button>
   <button class="fb" data-g="tier" data-v="V1">V1 only</button>
   <button class="fb" data-g="tier" data-v="V2">V2 only</button>
-  <button class="fb on" data-g="tier" data-v="QUAL">V1 + V2</button>
+  <button class="fb" data-g="tier" data-v="QUAL">V1 + V2</button>
   <span class="fl" style="margin-left:8px">Vol ≥</span>
   <input id="vol-input" type="number" min="0" max="999" value="50"
          style="width:58px;padding:2px 6px;background:#1f2937;border:1px solid #374151;
@@ -178,7 +178,7 @@ tr:hover td{background:#111827}
 /* ================================================================
    MACD Alerts
    ================================================================ */
-const F={dir:'ALL',tf:'0',wave:'0',tier:'QUAL',vol:'0.5'};
+const F={dir:'ALL',tf:'0',wave:'0',tier:'ALL',vol:'0.5'};
 let alerts=[];
 
 document.querySelectorAll('.fb').forEach(b=>{
