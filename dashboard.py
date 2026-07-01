@@ -329,7 +329,8 @@ es.addEventListener('alert',e=>{
 
 
 def create_app(alert_mgr: AlertManager,
-               get_leaderboard: Callable[[], list[dict]]) -> Flask:
+               get_leaderboard: Callable[[], list[dict]],
+               get_debug: Callable[[], dict] | None = None) -> Flask:
     app = Flask(__name__)
 
     @app.route('/')
@@ -343,6 +344,12 @@ def create_app(alert_mgr: AlertManager,
     @app.route('/api/rvol-leaderboard')
     def api_rvol_leaderboard():
         return jsonify(get_leaderboard())
+
+    @app.route('/api/debug')
+    def api_debug():
+        if get_debug:
+            return jsonify(get_debug())
+        return jsonify({'error': 'no debug fn'})
 
     @app.route('/stream')
     def stream():

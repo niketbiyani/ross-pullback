@@ -172,7 +172,22 @@ def main():
         engines[key].update(rec)
 
     # ── dashboard ─────────────────────────────────────────────────────────────
-    app = create_app(alert_mgr, compute_leaderboard)
+    def get_debug() -> dict:
+        avg_nonzero  = sum(1 for v in avg_volumes.values() if v > 0)
+        today_nonzero = sum(1 for v in today_volumes.values() if v > 0)
+        sample_avg   = {k: v for k, v in list(avg_volumes.items())[:5]}
+        sample_today = {k: v for k, v in list(today_volumes.items())[:5]}
+        return {
+            'avg_volumes_total':   len(avg_volumes),
+            'avg_volumes_nonzero': avg_nonzero,
+            'avg_volumes_sample':  sample_avg,
+            'today_volumes_total':   len(today_volumes),
+            'today_volumes_nonzero': today_nonzero,
+            'today_volumes_sample':  sample_today,
+            'is_live': is_live,
+        }
+
+    app = create_app(alert_mgr, compute_leaderboard, get_debug)
     logger.info('Dashboard → http://%s:%d', Config.DASHBOARD_HOST, Config.DASHBOARD_PORT)
 
     flask_thread = threading.Thread(
