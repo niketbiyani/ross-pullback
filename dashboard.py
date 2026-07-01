@@ -153,7 +153,7 @@ function ok(a){
 }
 
 function render(){
-  const rows=alerts.filter(ok);
+  const rows=alerts.filter(ok).sort((a,b)=>b.ts-a.ts);
   document.getElementById('count').textContent=rows.length+' alerts';
   document.getElementById('tb').innerHTML=rows.map((a,i)=>`
   <tr class="${i<3?'new':''}">
