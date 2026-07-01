@@ -142,11 +142,11 @@ tr:hover td{background:#111827}
   <button class="fb" data-g="tier" data-v="V1">V1 only</button>
   <button class="fb" data-g="tier" data-v="V2">V2 only</button>
   <button class="fb" data-g="tier" data-v="QUAL">V1 + V2</button>
-  <span class="fl" style="margin-left:8px">Vol today:</span>
-  <button class="fb on" data-g="vol" data-v="0">All</button>
-  <button class="fb" data-g="vol" data-v="0.25">25%+</button>
-  <button class="fb" data-g="vol" data-v="0.5">50%+</button>
-  <button class="fb" data-g="vol" data-v="1">100%+</button>
+  <span class="fl" style="margin-left:8px">Vol ≥</span>
+  <input id="vol-input" type="number" min="0" max="999" value="50"
+         style="width:58px;padding:2px 6px;background:#1f2937;border:1px solid #374151;
+                border-radius:3px;color:#e0e0e0;font-size:11px;font-family:monospace">
+  <span class="fl">% avg</span>
 </div>
 
 <!-- ── MACD Alert table ──────────────────────────────────────────── -->
@@ -167,7 +167,7 @@ tr:hover td{background:#111827}
 /* ================================================================
    MACD Alerts
    ================================================================ */
-const F={dir:'ALL',tf:'0',wave:'0',tier:'ALL',vol:'0'};
+const F={dir:'ALL',tf:'0',wave:'0',tier:'ALL',vol:'0.5'};
 let alerts=[];
 
 document.querySelectorAll('.fb').forEach(b=>{
@@ -178,6 +178,12 @@ document.querySelectorAll('.fb').forEach(b=>{
     F[g]=b.dataset.v;
     render();
   });
+});
+const volInput=document.getElementById('vol-input');
+volInput.addEventListener('input',()=>{
+  const v=parseFloat(volInput.value);
+  F.vol=isNaN(v)?'0':String(v/100);
+  render();
 });
 
 function emaCls(a){return a.ema_clear?'bGn':a.ema_clear_v2?'bAm':'bGy';}

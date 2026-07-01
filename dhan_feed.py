@@ -215,6 +215,7 @@ class LiveFeed:
 
     def _fetch_today(self, sec: dict) -> list[dict]:
         today = date.today().isoformat()
+        _api_throttle()
         try:
             resp = self._client.intraday_minute_data(
                 security_id=sec["security_id"],
@@ -271,15 +272,15 @@ class LiveFeed:
                 self._last_ts[(name, tf)] = new_bars[-1]['ts']
 
     def _poll_all(self):
-        logged = False
-        for sec in self._symbols:
-            if not self._running:
-                break
-            self._process_symbol(sec)
-            if not logged:
-                logger.info("Live poll cycle running (%d symbols)...", len(self._symbols))
-                logged = True
-            time.sleep(0.08)   # 12.5 req/s, well under 20 req/s limit
+        logger.info("Live poll cycle running (%d symbols)...", len(self._symbols))
+        with ThreadPoolExecutor(max_workers=Config.MAX_WORKERS) as ex:
+            futs = {ex.submit(self._process_symbol, sec): sec
+                    for sec in self._symbols if self._running}
+            for f in as_completed(futs):
+                try:
+                    f.result()
+                except Exception as e:
+                    logger.debug("Live poll worker error: %s", e)
 
     def start(self):
         self._running = True
