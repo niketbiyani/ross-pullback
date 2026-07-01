@@ -233,6 +233,14 @@ function render(){
   </tr>`).join('');
   scroller.scrollTop=savedScroll;
 }
+function mergeAlerts(incoming){
+  const seen=new Set(alerts.map(a=>a.symbol+':'+a.ts+':'+a.tf));
+  incoming.forEach(a=>{
+    const k=a.symbol+':'+a.ts+':'+a.tf;
+    if(!seen.has(k)){alerts.push(a);seen.add(k);}
+  });
+  render();
+}
 fetch('./api/alerts').then(r=>r.json()).then(d=>{alerts=d;render();});
 
 /* ================================================================
@@ -284,7 +292,18 @@ setInterval(renderHot, 60000);   // age out stale cards every minute
    SSE stream — handles both alert and vol_spike events
    ================================================================ */
 const es=new EventSource('./stream');
-es.onopen=()=>{const s=document.getElementById('status');s.textContent='live';s.className='live';};
+es.onopen=()=>{
+  const s=document.getElementById('status');
+  s.textContent='live';s.className='live';
+  // Re-fetch and merge on every reconnect so events missed while disconnected
+  // are recovered without replacing alerts that are already in local memory.
+  fetch('./api/alerts').then(r=>r.json()).then(mergeAlerts);
+  fetch('./api/vol-spikes').then(r=>r.json()).then(d=>{
+    const seen=new Set(volSpikes.map(s=>s.symbol+':'+s.ts));
+    d.forEach(s=>{if(!seen.has(s.symbol+':'+s.ts)){volSpikes.push(s);}});
+    renderHot();
+  });
+};
 es.onerror=()=>{document.getElementById('status').textContent='reconnecting…';document.getElementById('status').className='';};
 
 es.addEventListener('alert',e=>{
