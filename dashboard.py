@@ -2,10 +2,10 @@
 Flask dashboard with Server-Sent Events for live alert streaming.
 Run via main.py; open http://localhost:5050 in a browser.
 
-Top section — Vol Spikes:
-  Cards showing any 1m bar that exceeded RVOL_SPIKE_THRESHOLD× its historical
-  average for that minute-of-day. Each card shows RVOL, close price, and an
-  estimated buyer/seller split (same formula as TV's Volume Buyers vs Sellers).
+Top section — RVOL Leaderboard:
+  Top 20 stocks ranked by (rolling avg of last ≤10 1m bars today) ÷ historical
+  avg bar volume (5-day pool). Refreshes every 15 s automatically.
+  Shows ratio, rolling avg volume, historical avg, and buyer/seller split.
 
 Bottom section — MACD Alerts table:
   EMA  green  — episode-level EMA clear (V1 logic)
@@ -23,10 +23,11 @@ Volume badge on alert rows (today's cumulative intraday vs avg daily):
 import json
 import logging
 import time
+from typing import Callable
 
 from flask import Flask, Response, jsonify
 
-from alert_manager import AlertManager, VolumeAlertManager
+from alert_manager import AlertManager
 
 logger = logging.getLogger(__name__)
 
@@ -46,30 +47,30 @@ h1{font-size:15px;color:#60a5fa;letter-spacing:.5px}
 #status.live{background:#052e16;color:#4ade80}
 #count{font-size:11px;color:#6b7280;margin-left:auto}
 
-/* ── vol spike section ─────────────────────────────────────────── */
-#hotbox{background:#080d14;border-bottom:2px solid #1f2937}
-#hot-hdr{display:flex;align-items:center;gap:10px;padding:6px 14px 5px;flex-wrap:wrap}
-.hot-title{color:#60a5fa;font-size:11px;font-weight:bold;letter-spacing:.5px;text-transform:uppercase}
-.hot-thresh{font-size:10px;color:#6b7280;background:#1f2937;padding:1px 6px;border-radius:2px}
-#hot-count{font-size:10px;color:#6b7280}
-.hot-explain{font-size:10px;color:#374151;margin-left:auto}
-#hot-scroll{max-height:140px;overflow-y:auto}
-#hot-scroll::-webkit-scrollbar{width:3px}
-#hot-scroll::-webkit-scrollbar-thumb{background:#1f2937}
-#hot-table{width:100%;border-collapse:collapse}
-#hot-table th{padding:4px 10px;color:#4b5563;font-weight:normal;font-size:10px;
-              border-bottom:1px solid #0f172a;white-space:nowrap;background:#080d14;
-              position:sticky;top:0}
-#hot-table td{padding:4px 10px;border-bottom:1px solid #0a0f18;white-space:nowrap;font-size:11px}
-#hot-table tr:hover td{background:#0c1420}
-.rvol-hi{color:#4ade80;font-weight:bold}
-.rvol-md{color:#fb923c;font-weight:bold}
-.rvol-lo{color:#9ca3af}
+/* ── RVOL leaderboard ──────────────────────────────────────────────── */
+#leaderboard{background:#080d14;border-bottom:2px solid #1f2937}
+#lb-hdr{display:flex;align-items:center;gap:10px;padding:6px 14px 5px;flex-wrap:wrap}
+.lb-title{color:#60a5fa;font-size:11px;font-weight:bold;letter-spacing:.5px;text-transform:uppercase}
+#lb-updated{font-size:10px;color:#374151;margin-left:auto}
+.lb-explain{font-size:10px;color:#374151}
+#lb-scroll{max-height:160px;overflow-y:auto}
+#lb-scroll::-webkit-scrollbar{width:3px}
+#lb-scroll::-webkit-scrollbar-thumb{background:#1f2937}
+#lb-table{width:100%;border-collapse:collapse}
+#lb-table th{padding:4px 10px;color:#4b5563;font-weight:normal;font-size:10px;
+             border-bottom:1px solid #0f172a;white-space:nowrap;background:#080d14;
+             position:sticky;top:0}
+#lb-table td{padding:4px 10px;border-bottom:1px solid #0a0f18;white-space:nowrap;font-size:11px}
+#lb-table tr:hover td{background:#0c1420}
+.ratio-hi{color:#4ade80;font-weight:bold}
+.ratio-md{color:#fb923c;font-weight:bold}
+.ratio-lo{color:#9ca3af}
 .bs-bar{display:inline-block;width:60px;height:6px;background:#1e293b;
         border-radius:3px;overflow:hidden;vertical-align:middle;margin:0 4px}
 .bs-b{display:inline-block;height:100%;background:#4ade80;float:left}
 .bs-s{display:inline-block;height:100%;background:#f87171;float:right}
-.hot-empty-row td{color:#1f2937;font-size:11px;padding:18px 10px;text-align:center}
+.lb-empty td{color:#1f2937;font-size:11px;padding:18px 10px;text-align:center}
+#lb-rank{color:#4b5563;font-size:10px;width:24px}
 
 /* ── filters ───────────────────────────────────────────────────── */
 #filters{padding:6px 16px;background:#0f172a;border-bottom:1px solid #1f2937;
@@ -80,7 +81,7 @@ h1{font-size:15px;color:#60a5fa;letter-spacing:.5px}
 .fb.on{background:#1e3a5f;border-color:#3b82f6;color:#e0e0e0}
 
 /* ── main alert table ──────────────────────────────────────────── */
-.scroller{overflow-y:auto;height:calc(100vh - 228px)}
+.scroller{overflow-y:auto;height:calc(100vh - 248px)}
 table{width:100%;border-collapse:collapse}
 thead{position:sticky;top:0;background:#0f172a;z-index:5}
 th{padding:7px 10px;text-align:left;color:#6b7280;font-weight:normal;
@@ -108,24 +109,26 @@ tr:hover td{background:#111827}
   <span id="count"></span>
 </header>
 
-<!-- ── Vol Spikes table ──────────────────────────────────────────── -->
-<div id="hotbox">
-  <div id="hot-hdr">
-    <span class="hot-title">Vol Spikes</span>
-    <span class="hot-thresh" id="hot-thresh"></span>
-    <span id="hot-count">0 spikes</span>
-    <span class="hot-explain">Z-score = how many std deviations this bar's volume is above the 5-day average (all bars, no time-of-day grouping)</span>
+<!-- ── RVOL Leaderboard ─────────────────────────────────────────────── -->
+<div id="leaderboard">
+  <div id="lb-hdr">
+    <span class="lb-title">Relative Volume — Top 20</span>
+    <span class="lb-explain">rolling ≤10 bar avg today ÷ 5-day historical avg/bar</span>
+    <span id="lb-updated"></span>
   </div>
-  <div id="hot-scroll">
-    <table id="hot-table">
+  <div id="lb-scroll">
+    <table id="lb-table">
       <thead><tr>
-        <th>Time</th><th>Symbol</th><th>Price</th>
-        <th>Vol (bar)</th><th>5d Avg/bar</th>
-        <th>Z-score <span style="font-weight:normal;color:#374151" title="Std deviations above the 5-day per-bar mean (all market-hours bars pooled)">ℹ</span></th>
+        <th id="lb-rank">#</th>
+        <th>Symbol</th>
+        <th>RVOL</th>
+        <th>Today avg/bar</th>
+        <th>5d avg/bar</th>
+        <th>Window</th>
         <th>Buyers → Sellers</th>
       </tr></thead>
-      <tbody id="hot-tbody">
-        <tr class="hot-empty-row"><td colspan="7">No spikes yet — waiting for market open</td></tr>
+      <tbody id="lb-tbody">
+        <tr class="lb-empty"><td colspan="7">Waiting for live data…</td></tr>
       </tbody>
     </table>
   </div>
@@ -175,6 +178,48 @@ tr:hover td{background:#111827}
 </div>
 
 <script>
+/* ================================================================
+   RVOL Leaderboard — polls /api/rvol-leaderboard every 15s
+   ================================================================ */
+function fmtV(v){
+  return v>=1e6?(v/1e6).toFixed(2)+'M':v>=1e3?(v/1e3).toFixed(1)+'K':v.toFixed(0);
+}
+function ratioCls(r){return r>=3?'ratio-hi':r>=2?'ratio-md':'ratio-lo';}
+
+function renderLeaderboard(rows){
+  const tbody=document.getElementById('lb-tbody');
+  if(!rows||!rows.length){
+    tbody.innerHTML='<tr class="lb-empty"><td colspan="7">No data yet — waiting for market open</td></tr>';
+    return;
+  }
+  tbody.innerHTML=rows.map((r,i)=>{
+    const bp=Math.round(r.buyer_pct*100);
+    const sp=100-bp;
+    return `<tr>
+      <td id="lb-rank">${i+1}</td>
+      <td><b>${r.symbol}</b></td>
+      <td class="${ratioCls(r.ratio)}">${r.ratio.toFixed(2)}×</td>
+      <td>${fmtV(r.rolling_avg)}</td>
+      <td style="color:#4b5563">${fmtV(r.hist_avg)}</td>
+      <td style="color:#4b5563">${r.bars} bar${r.bars===1?'':'s'}</td>
+      <td>
+        <span style="color:#4ade80">${bp}%</span>
+        <span class="bs-bar"><span class="bs-b" style="width:${bp}%"></span><span class="bs-s" style="width:${sp}%"></span></span>
+        <span style="color:#f87171">${sp}%</span>
+      </td>
+    </tr>`;
+  }).join('');
+  const now=new Date();
+  document.getElementById('lb-updated').textContent=
+    'updated '+now.toTimeString().slice(0,5);
+}
+
+function fetchLeaderboard(){
+  fetch('./api/rvol-leaderboard').then(r=>r.json()).then(renderLeaderboard).catch(()=>{});
+}
+fetchLeaderboard();
+setInterval(fetchLeaderboard, 15000);
+
 /* ================================================================
    MACD Alerts
    ================================================================ */
@@ -261,80 +306,23 @@ function mergeAlerts(incoming){
 fetch('./api/alerts').then(r=>r.json()).then(d=>{alerts=d;render();});
 
 /* ================================================================
-   Vol Spikes hot-box
-   ================================================================ */
-let volSpikes=[];
-const HOT_MAX_AGE_MS = 45 * 60 * 1000;   // keep spikes for 45 min
-
-function fmtV(v){
-  return v>=1e6?(v/1e6).toFixed(2)+'M':v>=1e3?(v/1e3).toFixed(1)+'K':v.toFixed(0);
-}
-function rvolCls(z){return z>=4?'rvol-hi':z>=2?'rvol-md':'rvol-lo';}
-function renderHot(){
-  const now=Date.now();
-  const rows=volSpikes
-    .filter(s=>(now - s.ts*1000) < HOT_MAX_AGE_MS)
-    .sort((a,b)=>b.ts-a.ts)
-    .slice(0,80);
-  document.getElementById('hot-count').textContent=rows.length+' spike'+(rows.length===1?'':'s');
-  const tbody=document.getElementById('hot-tbody');
-  if(!rows.length){
-    tbody.innerHTML='<tr class="hot-empty-row"><td colspan="7">No spikes yet — waiting for market open</td></tr>';
-    return;
-  }
-  tbody.innerHTML=rows.map(s=>{
-    const bp=Math.round(s.buyer_pct*100);
-    const sp=100-bp;
-    return `<tr>
-      <td style="color:#6b7280">${s.time_ist}</td>
-      <td><b>${s.symbol}</b></td>
-      <td style="color:#94a3b8">₹${s.close.toFixed(2)}</td>
-      <td>${fmtV(s.volume)}</td>
-      <td style="color:#4b5563">${fmtV(s.mean_vol)}</td>
-      <td class="${rvolCls(s.z_score)}">${s.z_score.toFixed(1)}σ</td>
-      <td>
-        <span style="color:#4ade80">${bp}%</span>
-        <span class="bs-bar"><span class="bs-b" style="width:${bp}%"></span><span class="bs-s" style="width:${sp}%"></span></span>
-        <span style="color:#f87171">${sp}%</span>
-      </td>
-    </tr>`;
-  }).join('');
-}
-fetch('./api/vol-spikes').then(r=>r.json()).then(d=>{volSpikes=d;renderHot();});
-setInterval(renderHot, 60000);   // age out stale cards every minute
-
-/* ================================================================
-   SSE stream — handles both alert and vol_spike events
+   SSE stream — MACD alerts only
    ================================================================ */
 const es=new EventSource('./stream');
 es.onopen=()=>{
   const s=document.getElementById('status');
   s.textContent='live';s.className='live';
-  // Re-fetch and merge on every reconnect so events missed while disconnected
-  // are recovered without replacing alerts that are already in local memory.
   fetch('./api/alerts').then(r=>r.json()).then(mergeAlerts);
-  fetch('./api/vol-spikes').then(r=>r.json()).then(d=>{
-    const seen=new Set(volSpikes.map(s=>s.symbol+':'+s.ts));
-    d.forEach(s=>{if(!seen.has(s.symbol+':'+s.ts)){volSpikes.push(s);}});
-    renderHot();
-  });
+  fetchLeaderboard();
 };
-es.onerror=()=>{document.getElementById('status').textContent='reconnecting…';document.getElementById('status').className='';};
-
+es.onerror=()=>{
+  document.getElementById('status').textContent='reconnecting…';
+  document.getElementById('status').className='';
+};
 es.addEventListener('alert',e=>{
   alerts.unshift(JSON.parse(e.data));
   if(alerts.length>5000) alerts.pop();
   render();
-});
-es.addEventListener('vol_spike',e=>{
-  volSpikes.unshift(JSON.parse(e.data));
-  if(volSpikes.length>500) volSpikes.pop();
-  renderHot();
-});
-
-/* Set threshold label from server */
-fetch('./api/config').then(r=>r.json()).then(d=>{
-  document.getElementById('hot-thresh').textContent='Z ≥ '+d.rvol_threshold+'σ';
 });
 </script>
 </body>
@@ -342,7 +330,8 @@ fetch('./api/config').then(r=>r.json()).then(d=>{
 '''
 
 
-def create_app(alert_mgr: AlertManager, vol_alert_mgr: VolumeAlertManager) -> Flask:
+def create_app(alert_mgr: AlertManager,
+               get_leaderboard: Callable[[], list[dict]]) -> Flask:
     app = Flask(__name__)
 
     @app.route('/')
@@ -353,31 +342,20 @@ def create_app(alert_mgr: AlertManager, vol_alert_mgr: VolumeAlertManager) -> Fl
     def api_alerts():
         return jsonify(alert_mgr.get_all())
 
-    @app.route('/api/vol-spikes')
-    def api_vol_spikes():
-        return jsonify(vol_alert_mgr.get_all())
-
-    @app.route('/api/config')
-    def api_config():
-        from config import Config
-        return jsonify({'rvol_threshold': Config.RVOL_SPIKE_THRESHOLD})
+    @app.route('/api/rvol-leaderboard')
+    def api_rvol_leaderboard():
+        return jsonify(get_leaderboard())
 
     @app.route('/stream')
     def stream():
-        q_macd = alert_mgr.subscribe()
-        q_vol  = vol_alert_mgr.subscribe()
+        q = alert_mgr.subscribe()
 
         def gen():
             yield 'data: connected\n\n'
             while True:
-                sent = False
-                if q_macd:
-                    yield f'event: alert\ndata: {json.dumps(q_macd.popleft())}\n\n'
-                    sent = True
-                if q_vol:
-                    yield f'event: vol_spike\ndata: {json.dumps(q_vol.popleft())}\n\n'
-                    sent = True
-                if not sent:
+                if q:
+                    yield f'event: alert\ndata: {json.dumps(q.popleft())}\n\n'
+                else:
                     time.sleep(0.1)
                     yield ': keepalive\n\n'
 

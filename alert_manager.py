@@ -6,7 +6,6 @@ from collections import deque
 from dataclasses import asdict
 
 from strategy_engine import Alert
-from rvol import VolumeSpike
 
 
 def _ts_to_ist(ts: int) -> str:
@@ -51,47 +50,3 @@ class AlertManager:
                 self._queues.remove(q)
             except ValueError:
                 pass
-
-
-class VolumeAlertManager:
-    """Collects VolumeSpike events and fans them out to SSE subscribers."""
-
-    def __init__(self, max_history: int = 500):
-        self._lock    = threading.Lock()
-        self._history: deque[dict] = deque(maxlen=max_history)
-        self._seen:   set[str]     = set()
-        self._queues: list[deque]  = []
-
-    def add(self, spike: VolumeSpike) -> None:
-        key = f"{spike.symbol}:{spike.ts}"
-        with self._lock:
-            if key in self._seen:
-                return
-            self._seen.add(key)
-            d = {
-                'symbol':    spike.symbol,
-                'ts':        spike.ts,
-                'time_ist':  spike.time_ist,
-                'close':     spike.close,
-                'volume':    spike.volume,
-                'mean_vol':  round(spike.mean_vol, 1),
-                'std_vol':   round(spike.std_vol, 1),
-                'z_score':   round(spike.z_score, 2),
-                'buyer_vol':  spike.buyer_vol,
-                'seller_vol': spike.seller_vol,
-                'buyer_pct':  round(spike.buyer_pct, 3),
-                'seller_pct': round(1.0 - spike.buyer_pct, 3),
-            }
-            self._history.append(d)
-            for q in self._queues:
-                q.append(d)
-
-    def get_all(self) -> list[dict]:
-        with self._lock:
-            return list(reversed(self._history))
-
-    def subscribe(self) -> deque:
-        q: deque = deque()
-        with self._lock:
-            self._queues.append(q)
-        return q

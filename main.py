@@ -15,6 +15,7 @@ import logging
 import sys
 import threading
 import time
+from collections import deque
 from datetime import date, datetime, timedelta
 
 from dhanhq import DhanContext
@@ -24,7 +25,7 @@ from indicators import IndicatorSet
 from strategy_engine import StrategyEngine, BarRecord, Alert
 from universe import build_universe
 from dhan_feed import bootstrap, LiveFeed
-from alert_manager import AlertManager, VolumeAlertManager
+from alert_manager import AlertManager
 from rvol import RvolTracker
 from dashboard import create_app
 
@@ -43,24 +44,73 @@ def main():
             logger.error('Config: %s', e)
         sys.exit(1)
 
-    ctx           = DhanContext(Config.DHAN_CLIENT_ID, Config.DHAN_ACCESS_TOKEN)
-    alert_mgr     = AlertManager()
-    vol_alert_mgr = VolumeAlertManager()
+    ctx       = DhanContext(Config.DHAN_CLIENT_ID, Config.DHAN_ACCESS_TOKEN)
+    alert_mgr = AlertManager()
 
-    # ── state stores (created lazily as new symbol-TF combos appear) ─────────
+    # ── state stores ─────────────────────────────────────────────────────────
     ind_sets: dict[tuple, IndicatorSet]   = {}
     engines:  dict[tuple, StrategyEngine] = {}
 
-    is_live = False   # suppress alerts during bootstrap
+    is_live = False
 
-    # Only run strategy engine on the most recent 4 calendar days (~2 trading days).
-    # Earlier bars still flow through IndicatorSet for warmup — just skip episode detection.
-    _cutoff_date      = date.today() - timedelta(days=4)
-    _strategy_cutoff  = int(datetime(_cutoff_date.year, _cutoff_date.month, _cutoff_date.day).timestamp())
+    _cutoff_date     = date.today() - timedelta(days=4)
+    _strategy_cutoff = int(datetime(
+        _cutoff_date.year, _cutoff_date.month, _cutoff_date.day
+    ).timestamp())
 
-    # Live intraday volume tracking — updated in on_bar, read in on_alert
-    today_volumes: dict[str, float] = {}   # symbol -> cumulative shares traded today
-    avg_volumes:   dict[str, float] = {}   # symbol -> avg daily volume from bhavcopy
+    # Today's intraday volume (cumulative shares) — used for MACD alert rel_volume
+    today_volumes: dict[str, float] = {}
+    avg_volumes:   dict[str, float] = {}
+
+    # RVOL leaderboard: rolling window of last 10 1m bars (today only) per symbol
+    # Stores full bar dicts so we can compute volume + buyer/seller split
+    today_bars: dict[str, deque] = {}   # symbol → deque(maxlen=10) of bar dicts
+
+    # ── leaderboard computation ───────────────────────────────────────────────
+
+    def compute_leaderboard() -> list[dict]:
+        """
+        Rank all symbols by (rolling avg of last ≤10 1m bars today) ÷ historical mean.
+        Returns top 20, most active first.
+        """
+        rows = []
+        for symbol, bars in list(today_bars.items()):
+            if not bars:
+                continue
+            tracker = rvol_trackers.get(symbol)
+            if tracker is None or tracker.hist_mean == 0.0:
+                continue
+
+            total_vol   = 0.0
+            total_buyer = 0.0
+            n = len(bars)
+            for b in bars:
+                vol  = b.get('volume', 0.0)
+                high = b.get('high', 0.0)
+                low  = b.get('low',  0.0)
+                close = b.get('close', 0.0)
+                rng  = max(high - low, 1e-6)
+                total_vol   += vol
+                total_buyer += vol * max(close - low, 0.0) / rng
+
+            rolling_avg = total_vol / n
+            ratio       = rolling_avg / tracker.hist_mean
+            buyer_pct   = total_buyer / max(total_vol, 1e-6)
+
+            rows.append({
+                'symbol':      symbol,
+                'ratio':       round(ratio, 2),
+                'rolling_avg': round(rolling_avg),
+                'hist_avg':    round(tracker.hist_mean),
+                'bars':        n,
+                'buyer_pct':   round(buyer_pct, 3),
+                'seller_pct':  round(1.0 - buyer_pct, 3),
+            })
+
+        rows.sort(key=lambda x: x['ratio'], reverse=True)
+        return rows[:20]
+
+    # ── callbacks ─────────────────────────────────────────────────────────────
 
     def on_alert(alert: Alert):
         if is_live:
@@ -71,28 +121,21 @@ def main():
             alert_mgr.add(alert)
 
     def on_bar(symbol: str, tf: int, bar):
-        """
-        Called for every closed bar (dict or Bar obj, historical or live).
-        Creates state lazily, updates indicators, runs strategy engine.
-        Also accumulates today's intraday volume and drives RVOL tracking.
-        """
         b      = bar if isinstance(bar, dict) else bar.__dict__
         bar_ts = b.get('ts', b.get('timestamp', 0))
 
         if tf == 1:
             vol = b.get('volume', 0.0)
-            # Track today's cumulative volume (avoid double-counting resampled TFs)
             if date.fromtimestamp(bar_ts) == date.today():
                 today_volumes[symbol] = today_volumes.get(symbol, 0.0) + vol
-            # RVOL: feed historical bars during bootstrap, score during live session
+                # Rolling window for leaderboard (last ≤10 bars today)
+                if symbol not in today_bars:
+                    today_bars[symbol] = deque(maxlen=10)
+                today_bars[symbol].append(b)
+            # Feed historical bars to RVOL tracker during bootstrap
             tracker = rvol_trackers.get(symbol)
-            if tracker is not None:
-                if not is_live:
-                    tracker.add_historical(bar_ts, vol)
-                else:
-                    spike = tracker.score(b)
-                    if spike is not None and spike.z_score >= Config.RVOL_SPIKE_THRESHOLD:
-                        vol_alert_mgr.add(spike)
+            if tracker is not None and not is_live:
+                tracker.add_historical(bar_ts, vol)
 
         key = (symbol, tf)
         if key not in ind_sets:
@@ -101,10 +144,8 @@ def main():
 
         vals = ind_sets[key].update(bar)
         if vals is None:
-            return   # indicators still warming up
+            return
 
-        # Old bars: indicator warmup only — skip expensive episode detection.
-        # Last 4 calendar days (~2 trading days) still run the full strategy engine.
         if bar_ts < _strategy_cutoff:
             return
 
@@ -118,8 +159,8 @@ def main():
         )
         engines[key].update(rec)
 
-    # ── dashboard (start immediately so nginx never gets 502) ─────────────────
-    app = create_app(alert_mgr, vol_alert_mgr)
+    # ── dashboard ─────────────────────────────────────────────────────────────
+    app = create_app(alert_mgr, compute_leaderboard)
     logger.info('Dashboard → http://%s:%d', Config.DASHBOARD_HOST, Config.DASHBOARD_PORT)
 
     flask_thread = threading.Thread(
@@ -132,7 +173,7 @@ def main():
     flask_thread.start()
     time.sleep(1)
 
-    # ── build universe ────────────────────────────────────────────────────────
+    # ── universe ──────────────────────────────────────────────────────────────
     logger.info('Building universe (turnover filter >= ₹%.0fL)...',
                 Config.TURNOVER_THRESHOLD / 1e5)
     symbols = build_universe(ctx)
@@ -141,25 +182,23 @@ def main():
         sys.exit(1)
     logger.info('Universe: %d symbols', len(symbols))
 
-    # Populate avg_volumes for relative-volume calculations on live alerts
     avg_volumes.update({s['symbol']: s.get('avg_daily_volume', 0.0) for s in symbols})
 
-    # RVOL trackers — one per symbol, fed during bootstrap, scored during live
-    rvol_trackers: dict[str, RvolTracker] = {s['symbol']: RvolTracker(s['symbol']) for s in symbols}
+    rvol_trackers: dict[str, RvolTracker] = {
+        s['symbol']: RvolTracker(s['symbol']) for s in symbols
+    }
 
-    # ── historical bootstrap ──────────────────────────────────────────────────
+    # ── bootstrap ─────────────────────────────────────────────────────────────
     bootstrap(ctx, symbols, on_bar)
 
-    # Finalize RVOL trackers: compute per-minute averages from bootstrap history
     for t in rvol_trackers.values():
         t.finalize()
-    logger.info('RVOL trackers ready: %d symbols', len(rvol_trackers))
+    logger.info('RVOL baselines ready: %d symbols', len(rvol_trackers))
 
-    # Switch to live mode — now alerts are forwarded
     is_live = True
-    logger.info('Live mode active — alerts are now forwarded to dashboard')
+    logger.info('Live mode active — alerts and leaderboard now updating')
 
-    # ── live bar feed (polls intraday_minute_data every 15 s) ─────────────────
+    # ── live feed ─────────────────────────────────────────────────────────────
     feed = LiveFeed(ctx, symbols, on_bar)
     feed.start()
 
@@ -167,9 +206,10 @@ def main():
     try:
         while True:
             time.sleep(300)
-            live_engines = len([k for k in engines if k[1] == 1])
-            logger.info('Heartbeat — engines: %d (1m)  alerts today: %d',
-                        live_engines, len(alert_mgr.get_all()))
+            logger.info('Heartbeat — engines: %d (1m)  alerts: %d  leaderboard symbols: %d',
+                        len([k for k in engines if k[1] == 1]),
+                        len(alert_mgr.get_all()),
+                        len(today_bars))
     except KeyboardInterrupt:
         logger.info('Shutting down...')
         feed.stop()
