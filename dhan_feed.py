@@ -25,7 +25,7 @@ _LIVE_POLL_INTERVAL = 15   # seconds between live poll cycles
 # so 16 workers don't flood Dhan's 20 req/s limit.
 _API_LOCK    = threading.Lock()
 _API_LAST: float = 0.0
-_MIN_API_GAP = 0.12   # ~8 req·s⁻¹ — well under Dhan's rate limit
+_MIN_API_GAP = 0.25   # 4 req·s⁻¹ — conservative to avoid Dhan rate limits
 
 
 def _api_throttle():

@@ -77,7 +77,7 @@ def main():
         Returns top 20, most active first.
         """
         now_ist_min  = (int(time.time()) // 60 + 330) % (24 * 60)
-        elapsed_min  = max(now_ist_min - 555, 1)   # 555 = 9h15 in minutes
+        elapsed_min  = min(max(now_ist_min - 555, 1), 375)  # clamp to [1, 375]
         elapsed_frac = elapsed_min / 375.0
 
         rows = []
