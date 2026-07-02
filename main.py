@@ -346,17 +346,24 @@ def main():
                 # Fire a MOM alert (Alerts tab) at most once per 5 minutes per symbol
                 if best_pct >= 3.0 and bar_ts - mom_last_fired.get(symbol, 0) >= 300:
                     mom_last_fired[symbol] = bar_ts
+                    now_ts  = int(time.time())
+                    lag_s   = now_ts - (bar_ts + 60)  # seconds from bar close to detection
+                    logger.info('MOM %s %.2f%% bar=%s detected=%s lag=%ds',
+                                symbol, best_pct, _ist_time(bar_ts),
+                                _ist_time(now_ts), lag_s)
                     alert_mgr.add_event({
-                        'alert_type': 'MOM',
-                        'symbol':     symbol,
-                        'tf':         1,
-                        'pct':        round(best_pct, 2),
-                        'window':     best_win,
-                        'ts':         bar_ts,
-                        'time_ist':   _ist_time(bar_ts),
-                        'date_ist':   _ts_to_date(bar_ts),
-                        'today_volume': today_volumes.get(symbol, 0.0),
-                        '_key':       f"{symbol}:MOM:{bar_ts}",
+                        'alert_type':     'MOM',
+                        'symbol':         symbol,
+                        'tf':             1,
+                        'pct':            round(best_pct, 2),
+                        'window':         best_win,
+                        'ts':             bar_ts,
+                        'time_ist':       _ist_time(bar_ts),
+                        'date_ist':       _ts_to_date(bar_ts),
+                        'detected_at_ist': _ist_time(now_ts),
+                        'lag_s':          lag_s,
+                        'today_volume':   today_volumes.get(symbol, 0.0),
+                        '_key':           f"{symbol}:MOM:{bar_ts}",
                     })
 
                 # Range speed: % of avg daily range covered and how fast

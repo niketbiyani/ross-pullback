@@ -455,7 +455,7 @@ function render(){
     <td><b>${a.symbol}</b></td>
     <td class="tf">${a.tf}m</td>
     <td class="MOM" colspan="2">MOM&nbsp;${a.pct.toFixed(2)}%&nbsp;${a.window}b</td>
-    <td colspan="5" style="color:#4b5563;font-size:10px">momentum signal</td>
+    <td colspan="5" style="color:#4b5563;font-size:10px">${a.detected_at_ist ? `det:${a.detected_at_ist}&nbsp;lag:${a.lag_s}s` : 'momentum signal'}</td>
     <td>${volBadge(a)}</td>
     <td></td>
   </tr>`;
