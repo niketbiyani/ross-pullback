@@ -75,7 +75,7 @@ h1{font-size:15px;color:#60a5fa;letter-spacing:.5px}
 #tab-alerts tr:hover td{background:#111827}
 @keyframes hl{from{background:#0d3321}to{background:transparent}}
 .new td{animation:hl 2s ease-out}
-.SHORT{color:#f87171}.LONG{color:#4ade80}
+.SHORT{color:#f87171}.LONG{color:#4ade80}.MOM{color:#facc15;font-weight:bold}
 .WN{color:#94a3b8}.tf{color:#38bdf8}
 
 /* ── Rel Vol tab ──────────────────────────────────────────────────── */
@@ -117,7 +117,7 @@ th.sort-on.asc::after{content:' ▲'}
   <span id="status">connecting…</span>
   <div id="tabs">
     <button class="tab-btn on" data-tab="alerts">Alerts</button>
-    <button class="tab-btn" data-tab="rvol">Rel Vol</button>
+    <button class="tab-btn" data-tab="rvol">Movers</button>
   </div>
   <span id="count"></span>
 </header>
@@ -177,7 +177,7 @@ th.sort-on.asc::after{content:' ▲'}
 <!-- ── Rel Vol tab ────────────────────────────────────────────────── -->
 <div id="tab-rvol">
 <div id="rvol-toolbar">
-  <span class="lb-title">Relative Volume</span>
+  <span class="lb-title">Movers — alerted stocks only</span>
   <span class="fl" style="margin-left:12px">Vol ≥</span>
   <input id="lb-vol-input" type="number" min="0" step="100" value="0" class="num-in">
   <span class="fl">K shares</span>
@@ -194,13 +194,11 @@ th.sort-on.asc::after{content:' ▲'}
   <th class="sortable" data-tbl="lb" data-col="peak_mom_pct">Momentum</th>
   <th class="sortable" data-tbl="lb" data-col="rs_coverage">Rng Speed</th>
   <th class="sortable" data-tbl="lb" data-col="day_range_pct">Day Rng %</th>
-  <th class="sortable" data-tbl="lb" data-col="cb_ratio">Consol Brk</th>
   <th class="sortable" data-tbl="lb" data-col="ratio">Cum RVOL</th>
   <th class="sortable" data-tbl="lb" data-col="today_vol">Today Vol</th>
-  <th class="sortable" data-tbl="lb" data-col="buyer_pct">B → S</th>
 </tr></thead>
 <tbody id="lb-tbody">
-  <tr class="lb-empty"><td colspan="11">Waiting for live data…</td></tr>
+  <tr class="lb-empty"><td colspan="9">Waiting for alerts…</td></tr>
 </tbody>
 </table>
 </div>
@@ -288,31 +286,22 @@ function renderLeaderboard() {
   document.getElementById('lb-count').textContent = rows.length + ' symbols';
   const tbody = document.getElementById('lb-tbody');
   if (!rows.length) {
-    tbody.innerHTML = '<tr class="lb-empty"><td colspan="11">No data yet — bootstrap in progress or market closed</td></tr>';
+    tbody.innerHTML = '<tr class="lb-empty"><td colspan="9">No alerts yet — leaderboard populates as signals fire</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map((r, i) => {
-    const bp = Math.round(r.buyer_pct * 100), sp = 100 - bp;
     const brvol = r.bar_rvol || 0;
-    // Overnight change cell
     const oc = r.overnight_chg || 0;
     const ocStr = oc !== 0
       ? `<span style="color:${oc>0?'#4ade80':'#f87171'};font-weight:bold">${oc>0?'+':''}${oc.toFixed(2)}%</span>`
       : '<span style="color:#1f2937">—</span>';
-    // Peak momentum cell: best % move in 1-5 bars, with window size and time
     const momStr = r.peak_mom_pct
       ? `<span class="${r.peak_mom_pct>=3?'ratio-hi':r.peak_mom_pct>=1.5?'ratio-md':'ratio-lo'}">${r.peak_mom_pct.toFixed(2)}%</span>`
         + ` <span style="color:#4b5563;font-size:10px">${r.peak_mom_win}b @${r.peak_mom_time}</span>`
       : '<span style="color:#1f2937">—</span>';
-    // Range speed cell: % of avg daily range covered and how fast
     const rsStr = r.rs_coverage
       ? `<span style="color:#60a5fa">${r.rs_coverage.toFixed(0)}%</span>`
         + ` <span style="color:#4b5563;font-size:10px">in ${r.rs_elapsed}m</span>`
-      : '<span style="color:#1f2937">—</span>';
-    // Consol break cell
-    const cbStr = r.cb_ratio
-      ? `<span class="${barRvolCls(r.cb_ratio)}">${r.cb_ratio.toFixed(1)}×</span>`
-        + ` <span style="color:#4b5563;font-size:10px">@${r.cb_time}</span>`
       : '<span style="color:#1f2937">—</span>';
     return `<tr>
       <td style="color:#4b5563;font-size:10px">${i+1}</td>
@@ -322,14 +311,8 @@ function renderLeaderboard() {
       <td>${momStr}</td>
       <td>${rsStr}</td>
       <td style="color:#9ca3af">${r.day_range_pct>0?r.day_range_pct.toFixed(2)+'%':'—'}</td>
-      <td>${cbStr}</td>
       <td class="${ratioCls(r.ratio)}">${r.ratio.toFixed(2)}×</td>
       <td>${fmtV(r.today_vol)}</td>
-      <td>
-        <span style="color:#4ade80">${bp}%</span>
-        <span class="bs-bar"><span class="bs-b" style="width:${bp}%"></span><span class="bs-s" style="width:${sp}%"></span></span>
-        <span style="color:#f87171">${sp}%</span>
-      </td>
     </tr>`;
   }).join('');
   document.getElementById('lb-updated').textContent =
@@ -391,6 +374,13 @@ function tier(a){
   return 'raw';
 }
 function ok(a){
+  const isMom = a.alert_type === 'MOM';
+  // MOM alerts: only show when dir=ALL, wave=ALL, tier=ALL
+  if (isMom) {
+    if (F.dir !== 'ALL' || F.wave !== '0' || F.tier !== 'ALL') return false;
+    if (F.tf !== '0' && String(a.tf) !== F.tf) return false;
+    return true;
+  }
   if (F.dir !== 'ALL' && a.direction !== F.dir) return false;
   if (F.tf  !== '0'   && String(a.tf) !== F.tf) return false;
   if (F.wave === '1' && a.wave_num !== 1) return false;
@@ -401,8 +391,6 @@ function ok(a){
   if (F.tier === 'V2'   && t !== 'V2')  return false;
   if (F.tier === 'QUAL' && t === 'raw') return false;
   const vt = parseFloat(F.vol);
-  // Only filter by volume when the alert has live volume attached (today's alerts).
-  // Historical/bootstrap alerts have today_volume=0 and should always show.
   if (vt > 0 && (a.today_volume || 0) > 0 && (a.today_volume || 0) < vt) return false;
   const rt = parseFloat(F.range);
   if (rt > 0 && (a.day_range_pct || 0) < rt) return false;
@@ -415,8 +403,20 @@ function render(){
   filteredCount = rows.length;
   if (currentTab === 'alerts')
     document.getElementById('count').textContent = filteredCount + ' alerts';
-  document.getElementById('tb').innerHTML = rows.map((a, i) => `
-  <tr class="${i<3?'new':''}">
+  document.getElementById('tb').innerHTML = rows.map((a, i) => {
+    if (a.alert_type === 'MOM') {
+      return `<tr class="${i<3?'new':''}">
+    <td style="color:#4b5563">${a.date_ist||''}</td>
+    <td>${a.time_ist}</td>
+    <td><b>${a.symbol}</b></td>
+    <td class="tf">${a.tf}m</td>
+    <td class="MOM" colspan="2">MOM&nbsp;${a.pct.toFixed(2)}%&nbsp;${a.window}b</td>
+    <td colspan="5" style="color:#4b5563;font-size:10px">momentum signal</td>
+    <td>${volBadge(a)}</td>
+    <td></td>
+  </tr>`;
+    }
+    return `<tr class="${i<3?'new':''}">
     <td style="color:#4b5563">${a.date_ist||''}</td>
     <td>${a.time_ist}</td>
     <td><b>${a.symbol}</b></td>
@@ -430,7 +430,8 @@ function render(){
     <td>${badges(a)}</td>
     <td>${volBadge(a)}</td>
     <td style="color:#6b7280">${a.ep_len_so_far}</td>
-  </tr>`).join('');
+  </tr>`;
+  }).join('');
   scroller.scrollTop = savedTop;
 }
 function mergeAlerts(incoming) {

@@ -99,6 +99,9 @@ def main():
     bar_history:   dict[str, deque] = {}  # 5-bar rolling window for momentum calc
     peak_momentum: dict[str, dict]  = {}  # best multi-bar % move on _active_date
     range_speed:   dict[str, dict]  = {}  # how fast stock covered its avg daily range
+    mom_last_fired: dict[str, int]  = {}  # last bar_ts at which a MOM alert fired per symbol
+
+    alerted_symbols: set[str] = set()     # symbols with any alert (MACD or MOM) today
 
     rolling_bar_ranges: dict[str, deque] = {}
     consol_breaks:      dict[str, dict]  = {}
@@ -112,6 +115,11 @@ def main():
         m = (ts // 60 + 330) % (24 * 60)
         return f"{m // 60:02d}:{m % 60:02d}"
 
+    def _ts_to_date(ts: int) -> str:
+        from datetime import timezone, timedelta as _td
+        ist = datetime.fromtimestamp(ts, tz=timezone(_td(hours=5, minutes=30)))
+        return ist.strftime("%d-%b")
+
     def compute_leaderboard() -> list[dict]:
         # Use the active trading date's wall-clock position for elapsed calc;
         # in dry-run mode we estimate elapsed as end-of-day (375 min).
@@ -124,6 +132,8 @@ def main():
 
         rows = []
         for symbol, today_vol in list(today_volumes.items()):
+            if symbol not in alerted_symbols:
+                continue
             if today_vol <= 0:
                 continue
             avg_daily = avg_volumes.get(symbol, 0.0)
@@ -220,6 +230,7 @@ def main():
                 l = today_lows.get(alert.symbol, 0.0)
                 if h > l > 0:
                     alert.day_range_pct = round((h - l) / open_p * 100, 2)
+        alerted_symbols.add(alert.symbol)
         alert_mgr.add(alert)
 
     def on_volume_update(symbol: str, bars: list[dict]):
@@ -288,6 +299,23 @@ def main():
                             best_win = n
                 if best_pct > peak_momentum.get(symbol, {}).get('pct', 0.0):
                     peak_momentum[symbol] = {'ts': bar_ts, 'pct': round(best_pct, 2), 'window': best_win}
+
+                # Fire a MOM alert when ≥3% move, at most once per 5 minutes per symbol
+                if best_pct >= 3.0 and bar_ts - mom_last_fired.get(symbol, 0) >= 300:
+                    mom_last_fired[symbol] = bar_ts
+                    alerted_symbols.add(symbol)
+                    alert_mgr.add_event({
+                        'alert_type': 'MOM',
+                        'symbol':     symbol,
+                        'tf':         1,
+                        'pct':        round(best_pct, 2),
+                        'window':     best_win,
+                        'ts':         bar_ts,
+                        'time_ist':   _ist_time(bar_ts),
+                        'date_ist':   _ts_to_date(bar_ts),
+                        'today_volume': today_volumes.get(symbol, 0.0),
+                        '_key':       f"{symbol}:MOM:{bar_ts}",
+                    })
 
                 # Range speed: % of avg daily range covered and how fast
                 h_t = today_highs.get(symbol, 0.0)

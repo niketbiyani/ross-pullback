@@ -41,6 +41,18 @@ class AlertManager:
             for q in self._queues:
                 q.append(d)
 
+    def add_event(self, d: dict):
+        """Add a raw dict event (e.g. momentum signal) without an Alert object."""
+        key = d.get('_key', '')
+        with self._lock:
+            if key and key in self._seen:
+                return
+            if key:
+                self._seen.add(key)
+            self._history.append(d)
+            for q in self._queues:
+                q.append(d)
+
     def get_all(self) -> list[dict]:
         with self._lock:
             return list(reversed(self._history))
