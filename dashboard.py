@@ -155,7 +155,7 @@ th.sort-on.asc::after{content:' ▲'}
 <div class="scroller">
 <table>
 <thead><tr>
-  <th class="sortable" data-tbl="alert" data-col="ts">Date</th>
+  <th class="sortable" data-tbl="alert" data-col="date_ist">Date</th>
   <th class="sortable sort-on" data-tbl="alert" data-col="ts">Time</th>
   <th class="sortable" data-tbl="alert" data-col="symbol">Symbol</th>
   <th class="sortable" data-tbl="alert" data-col="tf">TF</th>
@@ -289,7 +289,7 @@ function renderLeaderboard() {
   document.getElementById('lb-count').textContent = rows.length + ' symbols';
   const tbody = document.getElementById('lb-tbody');
   if (!rows.length) {
-    tbody.innerHTML = '<tr class="lb-empty"><td colspan="7">No data — waiting for market open</td></tr>';
+    tbody.innerHTML = '<tr class="lb-empty"><td colspan="12">No data — waiting for market open</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map((r, i) => {
@@ -398,7 +398,9 @@ function ok(a){
   if (F.tier === 'V2'   && t !== 'V2')  return false;
   if (F.tier === 'QUAL' && t === 'raw') return false;
   const vt = parseFloat(F.vol);
-  if (vt > 0 && (a.today_volume || 0) < vt) return false;
+  // Only filter by volume when the alert has live volume attached (today's alerts).
+  // Historical/bootstrap alerts have today_volume=0 and should always show.
+  if (vt > 0 && (a.today_volume || 0) > 0 && (a.today_volume || 0) < vt) return false;
   const rt = parseFloat(F.range);
   if (rt > 0 && (a.day_range_pct || 0) < rt) return false;
   return true;
