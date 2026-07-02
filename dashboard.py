@@ -155,6 +155,9 @@ th.sort-on.asc::after{content:' ▲'}
   <span class="fl" style="margin-left:8px">Day Rng ≥</span>
   <input id="range-input" type="number" min="0" step="0.5" value="0" class="num-in">
   <span class="fl">%</span>
+  <span class="fl" style="margin-left:8px">MOM ≥</span>
+  <input id="alerts-mom-input" type="number" min="0" step="0.5" value="0" class="num-in">
+  <span class="fl">%</span>
 </div>
 <div class="scroller">
 <table>
@@ -375,6 +378,7 @@ setInterval(fetchLeaderboard, 15000);
    Alerts
    ================================================================ */
 const F = {dir:'ALL', tf:'0', wave:'0', tier:'ALL', vol:'500000', range:'0'};
+let alertMinMom  = 0;
 let alerts       = [];
 let filteredCount = 0;
 let alertSortCol = 'ts';
@@ -400,6 +404,10 @@ document.getElementById('range-input').addEventListener('input', e => {
   F.range = isNaN(v) ? '0' : String(v);
   render();
 });
+document.getElementById('alerts-mom-input').addEventListener('input', e => {
+  alertMinMom = parseFloat(e.target.value) || 0;
+  render();
+});
 
 function emaCls(a){return a.ema_clear?'bGn':a.ema_clear_v2?'bAm':'bGy';}
 function rsiCls(a){return a.rsi_extreme?'bGn':a.rsi_extreme_v2?'bAm':'bGy';}
@@ -419,6 +427,8 @@ function tier(a){
 }
 function ok(a){
   const isMom = a.alert_type === 'MOM';
+  const momPct = isMom ? (a.pct || 0) : (a.peak_mom_pct || 0);
+  if (alertMinMom > 0 && momPct < alertMinMom) return false;
   // MOM alerts: only show when dir=ALL, wave=ALL, tier=ALL
   if (isMom) {
     if (F.dir !== 'ALL' || F.wave !== '0' || F.tier !== 'ALL') return false;
@@ -536,7 +546,8 @@ connectSSE();
 def create_app(alert_mgr: AlertManager,
                get_leaderboard: Callable[[], list[dict]],
                get_debug: Callable[[], dict] | None = None,
-               rescan_ref: dict | None = None) -> Flask:
+               rescan_ref: dict | None = None,
+               get_peak_momentum: Callable[[], dict] | None = None) -> Flask:
     app = Flask(__name__)
 
     @app.route('/')
@@ -547,7 +558,14 @@ def create_app(alert_mgr: AlertManager,
 
     @app.route('/api/alerts')
     def api_alerts():
-        return jsonify(alert_mgr.get_all())
+        data = alert_mgr.get_all()
+        if get_peak_momentum:
+            pm = get_peak_momentum()
+            for d in data:
+                if 'peak_mom_pct' not in d:
+                    mom_ev = pm.get(d.get('symbol', ''))
+                    d['peak_mom_pct'] = mom_ev['pct'] if mom_ev else 0.0
+        return jsonify(data)
 
     @app.route('/api/rvol-leaderboard')
     def api_rvol_leaderboard():

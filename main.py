@@ -105,6 +105,7 @@ def main():
     peak_momentum: dict[str, dict]  = {}  # best multi-bar % move on _active_date
     range_speed:   dict[str, dict]  = {}  # how fast stock covered its avg daily range
     mom_last_fired: dict[str, int]  = {}  # last bar_ts at which a MOM alert fired per symbol
+    moves_log: dict[str, list[dict]] = {} # symbol → [{ts, pct, window}] one entry per MOM event
 
     alerted_symbols: set[str] = set()     # symbols with any alert (MACD or MOM) today
 
@@ -170,9 +171,8 @@ def main():
         elapsed_frac = elapsed_min / 375.0
 
         rows = []
-        for symbol, today_vol in list(today_volumes.items()):
-            if symbol not in alerted_symbols:
-                continue
+        for symbol in list(alerted_symbols):
+            today_vol = today_volumes.get(symbol, 0.0)
             if today_vol <= 0:
                 continue
             avg_daily = avg_volumes.get(symbol, 0.0)
@@ -201,12 +201,6 @@ def main():
             # Overnight change (live % from previous day's close)
             o_chg = overnight_chg.get(symbol, 0.0)
 
-            # Peak momentum event (best % move in any 1-5 bar window today)
-            mom_ev        = peak_momentum.get(symbol)
-            peak_mom_pct  = mom_ev['pct']    if mom_ev else 0.0
-            peak_mom_win  = mom_ev['window'] if mom_ev else 0
-            peak_mom_time = _ist_time(mom_ev['ts']) if mom_ev else ''
-
             # Range speed — % of avg daily range covered and how fast
             rs_ev       = range_speed.get(symbol)
             rs_coverage = rs_ev['coverage']     if rs_ev else 0.0
@@ -230,13 +224,10 @@ def main():
                 if tv > 0:
                     buyer_pct = tb / tv
 
-            rows.append({
+            base = {
                 'symbol':        symbol,
                 'bar_rvol':      round(bar_rvol, 1),
                 'overnight_chg': o_chg,
-                'peak_mom_pct':  peak_mom_pct,
-                'peak_mom_win':  peak_mom_win,
-                'peak_mom_time': peak_mom_time,
                 'rs_coverage':   rs_coverage,
                 'rs_elapsed':    rs_elapsed,
                 'day_range_pct': day_range_pct,
@@ -249,7 +240,23 @@ def main():
                 'elapsed':       elapsed_min,
                 'buyer_pct':     round(buyer_pct, 3),
                 'seller_pct':    round(1.0 - buyer_pct, 3),
-            })
+            }
+
+            # One row per MOM event; fall back to peak_momentum if moves_log is empty
+            moves = moves_log.get(symbol, [])
+            if not moves:
+                mom_ev = peak_momentum.get(symbol)
+                if mom_ev:
+                    moves = [mom_ev]
+                else:
+                    moves = [{'ts': 0, 'pct': 0.0, 'window': 0}]
+
+            for mv in moves:
+                row = dict(base)
+                row['peak_mom_pct']  = mv['pct']
+                row['peak_mom_win']  = mv.get('window', 0)
+                row['peak_mom_time'] = _ist_time(mv['ts']) if mv.get('ts') else ''
+                rows.append(row)
 
         rows.sort(key=lambda x: x['overnight_chg'], reverse=True)
         return rows
@@ -368,6 +375,9 @@ def main():
                         logger.info('MOM %s %.2f%% bar=%s detected=%s lag=%ds',
                                     symbol, best_pct, _ist_time(bar_ts),
                                     _ist_time(now_ts), lag_s)
+                        if symbol not in moves_log:
+                            moves_log[symbol] = []
+                        moves_log[symbol].append({'ts': bar_ts, 'pct': round(best_pct, 2), 'window': best_win})
                     alert_mgr.add_event(ev)
 
                 # Range speed: % of avg daily range covered and how fast
@@ -460,7 +470,8 @@ def main():
         }
 
     _rescan_ref: dict = {}
-    app = create_app(alert_mgr, compute_leaderboard, get_debug, _rescan_ref)
+    app = create_app(alert_mgr, compute_leaderboard, get_debug, _rescan_ref,
+                     get_peak_momentum=lambda: peak_momentum)
     logger.info('Dashboard → http://%s:%d', Config.DASHBOARD_HOST, Config.DASHBOARD_PORT)
 
     flask_thread = threading.Thread(
@@ -491,11 +502,13 @@ def main():
         """Read today's cached 1-min bars for every symbol and update Movers state.
         Used by Phase 1 (pre-bootstrap) and the dashboard Rescan button."""
         today = _active_date.isoformat()
+        local_last_fired: dict[str, int] = {}
         for sec in symbols:
             name = sec['symbol']
             bars = sorted(_load_cache(name).get(today, []), key=lambda x: x['ts'])
             if not bars:
                 continue
+            moves_log[name] = []  # rebuild from scratch for this symbol
             bh = deque(maxlen=5)
             vol_total = t_high = t_open = t_close = 0.0
             t_low = float('inf')
@@ -523,6 +536,9 @@ def main():
                     peak_momentum[name] = {'ts': ts, 'pct': round(best_pct, 2), 'window': best_win}
                 if best_pct >= 3.0:
                     alerted_symbols.add(name)
+                if best_pct >= 3.0 and ts - local_last_fired.get(name, 0) >= 300:
+                    local_last_fired[name] = ts
+                    moves_log[name].append({'ts': ts, 'pct': round(best_pct, 2), 'window': best_win})
             if vol_total > 0:   today_volumes[name]  = vol_total
             if t_high  > 0:     today_highs[name]    = t_high
             if t_low   < float('inf') and t_low > 0: today_lows[name] = t_low
