@@ -300,8 +300,8 @@ def main():
                 if best_pct > peak_momentum.get(symbol, {}).get('pct', 0.0):
                     peak_momentum[symbol] = {'ts': bar_ts, 'pct': round(best_pct, 2), 'window': best_win}
 
-                # Fire a MOM alert when ≥3% move, at most once per 2 minutes per symbol
-                if best_pct >= 3.0 and bar_ts - mom_last_fired.get(symbol, 0) >= 120:
+                # Fire a MOM alert when ≥3% move, at most once per 5 minutes per symbol
+                if best_pct >= 3.0 and bar_ts - mom_last_fired.get(symbol, 0) >= 300:
                     mom_last_fired[symbol] = bar_ts
                     alerted_symbols.add(symbol)
                     alert_mgr.add_event({
