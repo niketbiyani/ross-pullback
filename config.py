@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 _here    = os.path.dirname(os.path.abspath(__file__))
 _local   = os.path.join(_here, '.env')
-_rm_env  = os.path.join(_here, '..', 'risk-management', '.env')
+_rm_env  = os.path.join(_here, '..', 'Risk-Management', '.env')
 
 if os.path.exists(_local):
     load_dotenv(_local)
