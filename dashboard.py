@@ -188,6 +188,10 @@ th.sort-on.asc::after{content:' ▲'}
   <span class="fl" style="margin-left:12px">MOM ≥</span>
   <input id="mom-input" type="number" min="0" step="0.5" value="0" class="num-in">
   <span class="fl">%</span>
+  <span class="fl" style="margin-left:12px">Cum RVOL ≥</span>
+  <input id="crvol-input" type="number" min="0" step="0.5" value="0" class="num-in">
+  <span class="fl">×</span>
+  <button id="rescan-btn" class="fb" style="margin-left:8px">↺ Rescan</button>
   <span id="lb-count"></span>
   <span id="lb-updated"></span>
 </div>
@@ -276,11 +280,12 @@ function fmtV(v){
 function ratioCls(r){return r>=5?'ratio-hi':r>=2?'ratio-md':'ratio-lo';}
 function barRvolCls(r){return r>=10?'ratio-hi':r>=2?'ratio-md':'ratio-lo';}
 
-let lbData    = [];
-let lbMinVol  = 0;
-let lbMinMom  = 0;
-let lbSortCol = 'overnight_chg';
-let lbSortDir = -1;
+let lbData     = [];
+let lbMinVol   = 0;
+let lbMinMom   = 0;
+let lbMinRvol  = 0;
+let lbSortCol  = 'overnight_chg';
+let lbSortDir  = -1;
 markSortHeader('lb', lbSortCol, lbSortDir);
 
 document.getElementById('lb-vol-input').addEventListener('input', e => {
@@ -291,10 +296,32 @@ document.getElementById('mom-input').addEventListener('input', e => {
   lbMinMom = parseFloat(e.target.value) || 0;
   renderLeaderboard();
 });
+document.getElementById('crvol-input').addEventListener('input', e => {
+  lbMinRvol = parseFloat(e.target.value) || 0;
+  renderLeaderboard();
+});
+document.getElementById('rescan-btn').addEventListener('click', () => {
+  const btn = document.getElementById('rescan-btn');
+  btn.textContent = '↺ scanning…';
+  btn.disabled = true;
+  fetch('./api/rescan', {method: 'POST'})
+    .then(r => r.json())
+    .then(d => {
+      const label = d.new_symbols > 0 ? `↺ +${d.new_symbols} found` : '↺ done';
+      btn.textContent = label;
+      setTimeout(() => { btn.textContent = '↺ Rescan'; btn.disabled = false; }, 3000);
+      fetchLeaderboard();
+    })
+    .catch(() => { btn.textContent = '↺ Rescan'; btn.disabled = false; });
+});
 
 function renderLeaderboard() {
   if (currentTab !== 'rvol') return;
-  const filtered = lbData.filter(r => r.today_vol >= lbMinVol && (r.peak_mom_pct || 0) >= lbMinMom);
+  const filtered = lbData.filter(r =>
+    r.today_vol >= lbMinVol &&
+    (r.peak_mom_pct || 0) >= lbMinMom &&
+    (r.ratio || 0) >= lbMinRvol
+  );
   const rows = applySort(filtered, lbSortCol, lbSortDir);
   document.getElementById('lb-count').textContent = rows.length + ' symbols';
   const tbody = document.getElementById('lb-tbody');
@@ -508,7 +535,8 @@ connectSSE();
 
 def create_app(alert_mgr: AlertManager,
                get_leaderboard: Callable[[], list[dict]],
-               get_debug: Callable[[], dict] | None = None) -> Flask:
+               get_debug: Callable[[], dict] | None = None,
+               rescan_ref: dict | None = None) -> Flask:
     app = Flask(__name__)
 
     @app.route('/')
@@ -530,6 +558,14 @@ def create_app(alert_mgr: AlertManager,
         if get_debug:
             return jsonify(get_debug())
         return jsonify({'error': 'no debug fn'})
+
+    @app.route('/api/rescan', methods=['POST'])
+    def api_rescan():
+        fn = rescan_ref.get('fn') if rescan_ref else None
+        if fn is None:
+            return jsonify({'error': 'not ready — bootstrap still running'}), 503
+        n = fn()
+        return jsonify({'new_symbols': n})
 
     @app.route('/stream')
     def stream():

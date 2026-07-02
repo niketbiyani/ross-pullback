@@ -26,7 +26,7 @@ from config import Config
 from indicators import IndicatorSet
 from strategy_engine import StrategyEngine, BarRecord, Alert
 from universe import build_universe
-from dhan_feed import bootstrap, LiveFeed
+from dhan_feed import bootstrap, LiveFeed, _load_cache
 from alert_manager import AlertManager
 from rvol import RvolTracker
 from dashboard import create_app
@@ -450,7 +450,8 @@ def main():
             'is_live': is_live,
         }
 
-    app = create_app(alert_mgr, compute_leaderboard, get_debug)
+    _rescan_ref: dict = {}
+    app = create_app(alert_mgr, compute_leaderboard, get_debug, _rescan_ref)
     logger.info('Dashboard → http://%s:%d', Config.DASHBOARD_HOST, Config.DASHBOARD_PORT)
 
     flask_thread = threading.Thread(
@@ -511,6 +512,79 @@ def main():
 
     is_live = True
     logger.info('Live mode active — alerts and leaderboard now updating')
+
+    def rescan_today() -> int:
+        """Re-read today's cached 1-min bars for all symbols and re-run MOM detection.
+        Adds any symbols with a ≥3% move back into alerted_symbols + peak_momentum.
+        Called from the dashboard Rescan button via /api/rescan."""
+        today = date.today().isoformat()
+        n_new = 0
+        for sec in symbols:
+            name = sec['symbol']
+            cached = _load_cache(name)
+            bars = sorted(cached.get(today, []), key=lambda x: x['ts'])
+            if not bars:
+                continue
+            bh = deque(maxlen=5)
+            last_fired = 0
+            vol_total = 0.0
+            t_high = 0.0
+            t_low = float('inf')
+            t_open = 0.0
+            t_close = 0.0
+            for b in bars:
+                ts = b.get('ts', 0)
+                open_p = b.get('open', 0.0)
+                high   = b.get('high', 0.0)
+                low    = b.get('low', 0.0)
+                close  = b.get('close', 0.0)
+                vol    = b.get('volume', 0.0)
+                vol_total += vol
+                if t_open == 0.0:
+                    t_open = open_p
+                if high > t_high:
+                    t_high = high
+                if low > 0 and low < t_low:
+                    t_low = low
+                t_close = close
+                bh.append({'open': open_p, 'high': high, 'low': low, 'ts': ts})
+                hist = list(bh)
+                best_pct = 0.0
+                best_win = 1
+                for n in range(1, len(hist) + 1):
+                    win  = hist[-n:]
+                    ref  = win[0]['open']
+                    if ref > 0:
+                        move = (max(w['high'] for w in win) - min(w['low'] for w in win)) / ref * 100
+                        if move > best_pct:
+                            best_pct = move
+                            best_win = n
+                if best_pct > peak_momentum.get(name, {}).get('pct', 0.0):
+                    peak_momentum[name] = {'ts': ts, 'pct': round(best_pct, 2), 'window': best_win}
+                if best_pct >= 3.0 and ts - last_fired >= 300:
+                    last_fired = ts
+                    was_new = name not in alerted_symbols
+                    alerted_symbols.add(name)
+                    if was_new:
+                        n_new += 1
+            # Sync OHLCV into shared state so leaderboard is correct
+            if vol_total > 0:
+                today_volumes[name] = vol_total
+            if t_high > 0:
+                today_highs[name] = t_high
+            if t_low < float('inf') and t_low > 0:
+                today_lows[name] = t_low
+            if t_open > 0 and name not in today_opens:
+                today_opens[name] = t_open
+            prev_c = prev_closes.get(name, 0.0)
+            if prev_c > 0 and t_close > 0:
+                overnight_chg[name] = round((t_close - prev_c) / prev_c * 100, 2)
+        _save_state()
+        logger.info('Rescan today: %d new symbols added to Movers (total alerted: %d)',
+                    n_new, len(alerted_symbols))
+        return n_new
+
+    _rescan_ref['fn'] = rescan_today
 
     # ── live feed ─────────────────────────────────────────────────────────────
     feed = LiveFeed(ctx, symbols, on_bar, on_volume_update)
