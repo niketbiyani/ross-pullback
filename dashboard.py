@@ -155,9 +155,6 @@ th.sort-on.asc::after{content:' ▲'}
   <span class="fl" style="margin-left:8px">Day Rng ≥</span>
   <input id="range-input" type="number" min="0" step="0.5" value="0" class="num-in">
   <span class="fl">%</span>
-  <span class="fl" style="margin-left:8px">MOM ≥</span>
-  <input id="mom-input" type="number" min="0" step="0.5" value="0" class="num-in">
-  <span class="fl">%</span>
 </div>
 <div class="scroller">
 <table>
@@ -188,6 +185,9 @@ th.sort-on.asc::after{content:' ▲'}
   <span class="fl" style="margin-left:12px">Vol ≥</span>
   <input id="lb-vol-input" type="number" min="0" step="100" value="0" class="num-in">
   <span class="fl">K shares</span>
+  <span class="fl" style="margin-left:12px">MOM ≥</span>
+  <input id="mom-input" type="number" min="0" step="0.5" value="0" class="num-in">
+  <span class="fl">%</span>
   <span id="lb-count"></span>
   <span id="lb-updated"></span>
 </div>
@@ -278,6 +278,7 @@ function barRvolCls(r){return r>=10?'ratio-hi':r>=2?'ratio-md':'ratio-lo';}
 
 let lbData    = [];
 let lbMinVol  = 0;
+let lbMinMom  = 0;
 let lbSortCol = 'overnight_chg';
 let lbSortDir = -1;
 markSortHeader('lb', lbSortCol, lbSortDir);
@@ -286,10 +287,14 @@ document.getElementById('lb-vol-input').addEventListener('input', e => {
   lbMinVol = (parseFloat(e.target.value) || 0) * 1000;
   renderLeaderboard();
 });
+document.getElementById('mom-input').addEventListener('input', e => {
+  lbMinMom = parseFloat(e.target.value) || 0;
+  renderLeaderboard();
+});
 
 function renderLeaderboard() {
   if (currentTab !== 'rvol') return;
-  const filtered = lbData.filter(r => r.today_vol >= lbMinVol);
+  const filtered = lbData.filter(r => r.today_vol >= lbMinVol && (r.peak_mom_pct || 0) >= lbMinMom);
   const rows = applySort(filtered, lbSortCol, lbSortDir);
   document.getElementById('lb-count').textContent = rows.length + ' symbols';
   const tbody = document.getElementById('lb-tbody');
@@ -342,7 +347,7 @@ setInterval(fetchLeaderboard, 15000);
 /* ================================================================
    Alerts
    ================================================================ */
-const F = {dir:'ALL', tf:'0', wave:'0', tier:'ALL', vol:'500000', range:'0', mom:'0'};
+const F = {dir:'ALL', tf:'0', wave:'0', tier:'ALL', vol:'500000', range:'0'};
 let alerts       = [];
 let filteredCount = 0;
 let alertSortCol = 'ts';
@@ -368,11 +373,6 @@ document.getElementById('range-input').addEventListener('input', e => {
   F.range = isNaN(v) ? '0' : String(v);
   render();
 });
-document.getElementById('mom-input').addEventListener('input', e => {
-  const v = parseFloat(e.target.value);
-  F.mom = isNaN(v) ? '0' : String(v);
-  render();
-});
 
 function emaCls(a){return a.ema_clear?'bGn':a.ema_clear_v2?'bAm':'bGy';}
 function rsiCls(a){return a.rsi_extreme?'bGn':a.rsi_extreme_v2?'bAm':'bGy';}
@@ -396,8 +396,6 @@ function ok(a){
   if (isMom) {
     if (F.dir !== 'ALL' || F.wave !== '0' || F.tier !== 'ALL') return false;
     if (F.tf !== '0' && String(a.tf) !== F.tf) return false;
-    const mt = parseFloat(F.mom);
-    if (mt > 0 && (a.pct || 0) < mt) return false;
     return true;
   }
   if (F.dir !== 'ALL' && a.direction !== F.dir) return false;
