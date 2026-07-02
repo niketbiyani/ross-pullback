@@ -121,6 +121,7 @@ class StrategyEngine:
         self._ep_v2_gate:       bool | None = None
         self._ep_v2_rsi:        bool | None = None
         self._w1_entry_rel:     int  | None = None
+        self._prev_wave_entry_rel: int | None = None  # rel of last fired entry (RSI window start)
 
     def _reset_episode(self):
         self._ep_start = None
@@ -209,13 +210,19 @@ class StrategyEngine:
                 fired.append(pc)
                 continue
 
-            # ── V1 flags (episode-level) ──────────────────────────────────────
+            # ── V1 flags ─────────────────────────────────────────────────────
+            # EMA clear: episode-wide — no candle touches EMA50 from ep start to entry
+            # RSI extreme: wave-specific — must be fresh for each wave
+            #   W1: RSI window is ep_start → W1 cross (pre-pullback momentum)
+            #   W2+: RSI window is prev_entry → current cross (fresh push each wave)
+            cross_rel  = pc['rel']
+            wave_start = self._prev_wave_entry_rel if self._prev_wave_entry_rel is not None else 0
             if direction == 'DOWN':
                 ema_clear   = not any(b.high >= b.ema50 for b in ep[:cur_rel + 1])
-                rsi_extreme = min(b.rsi for b in ep[:cur_rel + 1]) <= 30
+                rsi_extreme = min(b.rsi for b in ep[wave_start:cross_rel + 1]) <= 30
             else:
                 ema_clear   = not any(b.low <= b.ema50 for b in ep[:cur_rel + 1])
-                rsi_extreme = max(b.rsi for b in ep[:cur_rel + 1]) >= 70
+                rsi_extreme = max(b.rsi for b in ep[wave_start:cross_rel + 1]) >= 70
 
             # ── wave counting ──────────────────────────────────────────────
             self._wave_num += 1
@@ -254,7 +261,8 @@ class StrategyEngine:
                 ema_clear_v2   = ema_clear
                 rsi_extreme_v2 = rsi_extreme
 
-            self._prev_entry_price = entry_price
+            self._prev_entry_price    = entry_price
+            self._prev_wave_entry_rel = cur_rel
             fired.append(pc)
 
             alert = Alert(
