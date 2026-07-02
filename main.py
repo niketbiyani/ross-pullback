@@ -57,8 +57,14 @@ def main():
     is_live = False
 
     def _trading_day() -> date:
-        """Most recent trading weekday (today if Mon-Fri, else most recent Friday)."""
+        """Most recent completed trading session.
+        Before 09:15 IST today's session hasn't started, so step back to yesterday
+        to avoid an empty leaderboard while yesterday's data is fully available.
+        """
+        now_ist = (int(time.time()) // 60 + 330) % (24 * 60)
         d = date.today()
+        if now_ist < 555:   # before 09:15 IST — no today bars yet
+            d -= timedelta(days=1)
         while d.weekday() >= 5:
             d -= timedelta(days=1)
         return d

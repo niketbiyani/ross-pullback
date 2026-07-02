@@ -179,7 +179,7 @@ th.sort-on.asc::after{content:' ▲'}
 <div id="rvol-toolbar">
   <span class="lb-title">Relative Volume</span>
   <span class="fl" style="margin-left:12px">Vol ≥</span>
-  <input id="lb-vol-input" type="number" min="0" step="100" value="500" class="num-in">
+  <input id="lb-vol-input" type="number" min="0" step="100" value="0" class="num-in">
   <span class="fl">K shares</span>
   <span id="lb-count"></span>
   <span id="lb-updated"></span>
@@ -271,7 +271,7 @@ function ratioCls(r){return r>=5?'ratio-hi':r>=2?'ratio-md':'ratio-lo';}
 function barRvolCls(r){return r>=10?'ratio-hi':r>=2?'ratio-md':'ratio-lo';}
 
 let lbData    = [];
-let lbMinVol  = 500000;
+let lbMinVol  = 0;
 let lbSortCol = 'overnight_chg';
 let lbSortDir = -1;
 markSortHeader('lb', lbSortCol, lbSortDir);
