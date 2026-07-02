@@ -189,19 +189,18 @@ th.sort-on.asc::after{content:' ▲'}
 <thead><tr>
   <th style="width:22px">#</th>
   <th class="sortable" data-tbl="lb" data-col="symbol">Symbol</th>
-  <th class="sortable sort-on" data-tbl="lb" data-col="bar_rvol">Vol RVOL</th>
-  <th class="sortable" data-tbl="lb" data-col="price_rvol">Px RVOL</th>
-  <th class="sortable" data-tbl="lb" data-col="day_range_rvol">Day Rng RVOL</th>
+  <th class="sortable" data-tbl="lb" data-col="bar_rvol">Vol RVOL</th>
+  <th class="sortable sort-on" data-tbl="lb" data-col="overnight_chg">Overnight</th>
+  <th class="sortable" data-tbl="lb" data-col="peak_mom_pct">Momentum</th>
+  <th class="sortable" data-tbl="lb" data-col="rs_coverage">Rng Speed</th>
   <th class="sortable" data-tbl="lb" data-col="day_range_pct">Day Rng %</th>
-  <th class="sortable" data-tbl="lb" data-col="peak_rvol">Peak Px RVOL</th>
-  <th class="sortable" data-tbl="lb" data-col="cb_ratio">Consol Break</th>
-  <th class="sortable" data-tbl="lb" data-col="ip_pct">In Play</th>
+  <th class="sortable" data-tbl="lb" data-col="cb_ratio">Consol Brk</th>
   <th class="sortable" data-tbl="lb" data-col="ratio">Cum RVOL</th>
   <th class="sortable" data-tbl="lb" data-col="today_vol">Today Vol</th>
   <th class="sortable" data-tbl="lb" data-col="buyer_pct">B → S</th>
 </tr></thead>
 <tbody id="lb-tbody">
-  <tr class="lb-empty"><td colspan="12">Waiting for live data…</td></tr>
+  <tr class="lb-empty"><td colspan="11">Waiting for live data…</td></tr>
 </tbody>
 </table>
 </div>
@@ -273,7 +272,7 @@ function barRvolCls(r){return r>=10?'ratio-hi':r>=2?'ratio-md':'ratio-lo';}
 
 let lbData    = [];
 let lbMinVol  = 500000;
-let lbSortCol = 'bar_rvol';
+let lbSortCol = 'overnight_chg';
 let lbSortDir = -1;
 markSortHeader('lb', lbSortCol, lbSortDir);
 
@@ -289,37 +288,41 @@ function renderLeaderboard() {
   document.getElementById('lb-count').textContent = rows.length + ' symbols';
   const tbody = document.getElementById('lb-tbody');
   if (!rows.length) {
-    tbody.innerHTML = '<tr class="lb-empty"><td colspan="12">No data — waiting for market open</td></tr>';
+    tbody.innerHTML = '<tr class="lb-empty"><td colspan="11">No data yet — bootstrap in progress or market closed</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map((r, i) => {
     const bp = Math.round(r.buyer_pct * 100), sp = 100 - bp;
-    const brvol = r.bar_rvol    || 0;
-    const prvol = r.price_rvol  || 0;
-    const drvol = r.day_range_rvol || 0;
-    const drpct = r.day_range_pct  || 0;
-    // Peak price RVOL cell
-    const peakStr = r.peak_rvol
-      ? `<span class="${barRvolCls(r.peak_rvol)}">${r.peak_rvol.toFixed(1)}×</span> <span style="color:#4b5563;font-size:10px">@${r.peak_time}</span>`
+    const brvol = r.bar_rvol || 0;
+    // Overnight change cell
+    const oc = r.overnight_chg || 0;
+    const ocStr = oc !== 0
+      ? `<span style="color:${oc>0?'#4ade80':'#f87171'};font-weight:bold">${oc>0?'+':''}${oc.toFixed(2)}%</span>`
       : '<span style="color:#1f2937">—</span>';
-    // Consolidation break cell
+    // Peak momentum cell: best % move in 1-5 bars, with window size and time
+    const momStr = r.peak_mom_pct
+      ? `<span class="${r.peak_mom_pct>=3?'ratio-hi':r.peak_mom_pct>=1.5?'ratio-md':'ratio-lo'}">${r.peak_mom_pct.toFixed(2)}%</span>`
+        + ` <span style="color:#4b5563;font-size:10px">${r.peak_mom_win}b @${r.peak_mom_time}</span>`
+      : '<span style="color:#1f2937">—</span>';
+    // Range speed cell: % of avg daily range covered and how fast
+    const rsStr = r.rs_coverage
+      ? `<span style="color:#60a5fa">${r.rs_coverage.toFixed(0)}%</span>`
+        + ` <span style="color:#4b5563;font-size:10px">in ${r.rs_elapsed}m</span>`
+      : '<span style="color:#1f2937">—</span>';
+    // Consol break cell
     const cbStr = r.cb_ratio
-      ? `<span class="${barRvolCls(r.cb_ratio)}">${r.cb_ratio.toFixed(1)}×</span> <span style="color:#4b5563;font-size:10px">@${r.cb_time}</span>`
-      : '<span style="color:#1f2937">—</span>';
-    // In-play cell
-    const ipStr = r.ip_pct
-      ? `<span style="color:#4ade80;font-weight:bold">${r.ip_pct.toFixed(1)}%</span> <span style="color:#4b5563;font-size:10px">@${r.ip_time}</span>`
+      ? `<span class="${barRvolCls(r.cb_ratio)}">${r.cb_ratio.toFixed(1)}×</span>`
+        + ` <span style="color:#4b5563;font-size:10px">@${r.cb_time}</span>`
       : '<span style="color:#1f2937">—</span>';
     return `<tr>
       <td style="color:#4b5563;font-size:10px">${i+1}</td>
       <td><b>${r.symbol}</b></td>
       <td class="${barRvolCls(brvol)}">${brvol.toFixed(1)}×</td>
-      <td class="${barRvolCls(prvol)}">${prvol.toFixed(1)}×</td>
-      <td class="${ratioCls(drvol)}">${drvol > 0 ? drvol.toFixed(2)+'×' : '—'}</td>
-      <td style="color:#9ca3af">${drpct > 0 ? drpct.toFixed(2)+'%' : '—'}</td>
-      <td>${peakStr}</td>
+      <td>${ocStr}</td>
+      <td>${momStr}</td>
+      <td>${rsStr}</td>
+      <td style="color:#9ca3af">${r.day_range_pct>0?r.day_range_pct.toFixed(2)+'%':'—'}</td>
       <td>${cbStr}</td>
-      <td>${ipStr}</td>
       <td class="${ratioCls(r.ratio)}">${r.ratio.toFixed(2)}×</td>
       <td>${fmtV(r.today_vol)}</td>
       <td>

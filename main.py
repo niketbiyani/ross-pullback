@@ -56,10 +56,20 @@ def main():
 
     is_live = False
 
-    _cutoff_date     = date.today() - timedelta(days=4)
+    def _trading_day() -> date:
+        """Most recent trading weekday (today if Mon-Fri, else most recent Friday)."""
+        d = date.today()
+        while d.weekday() >= 5:
+            d -= timedelta(days=1)
+        return d
+
+    _active_date     = _trading_day()
+    _cutoff_date     = _active_date - timedelta(days=4)
     _strategy_cutoff = int(datetime(
         _cutoff_date.year, _cutoff_date.month, _cutoff_date.day
     ).timestamp())
+    if _active_date != date.today():
+        logger.info('Dry-run mode — replaying %s (today is %s)', _active_date, date.today())
 
     # Today's intraday volume (cumulative shares) — used for MACD alert rel_volume
     today_volumes: dict[str, float] = {}
@@ -73,19 +83,22 @@ def main():
     rvol_trackers: dict[str, RvolTracker] = {}
 
     # ── price-action state ────────────────────────────────────────────────────
-    today_highs:    dict[str, float] = {}   # running intraday high
-    today_lows:     dict[str, float] = {}   # running intraday low
-    today_opens:    dict[str, float] = {}   # first bar open today
-    avg_daily_ranges: dict[str, float] = {} # avg (high-low)/open % across history days
+    today_highs:      dict[str, float] = {}
+    today_lows:       dict[str, float] = {}
+    today_opens:      dict[str, float] = {}
+    avg_daily_ranges: dict[str, float] = {}
+    prev_closes:      dict[str, float] = {}  # last close before _active_date
+    overnight_chg:    dict[str, float] = {}  # live % change vs prev_close
 
-    # Events tracked live (today only)
-    rolling_bar_ranges: dict[str, deque] = {}  # last 20 bar range %s (consolidation)
-    consol_breaks:      dict[str, dict]  = {}  # latest consolidation break event
-    peak_price_rvols:   dict[str, dict]  = {}  # best price RVOL bar seen today
-    in_play_stocks:     dict[str, dict]  = {}  # stocks with 3%+ opening range
+    bar_history:   dict[str, deque] = {}  # 5-bar rolling window for momentum calc
+    peak_momentum: dict[str, dict]  = {}  # best multi-bar % move on _active_date
+    range_speed:   dict[str, dict]  = {}  # how fast stock covered its avg daily range
 
-    # Temporary bootstrap accumulator — cleared after finalize
-    _bootstrap_days: dict[str, dict[str, dict]] = {}  # symbol → date → {high,low,open}
+    rolling_bar_ranges: dict[str, deque] = {}
+    consol_breaks:      dict[str, dict]  = {}
+
+    _bootstrap_days:       dict[str, dict[str, dict]] = {}
+    _bootstrap_prev_close: dict[str, float]           = {}
 
     # ── leaderboard computation ───────────────────────────────────────────────
 
@@ -94,8 +107,13 @@ def main():
         return f"{m // 60:02d}:{m % 60:02d}"
 
     def compute_leaderboard() -> list[dict]:
-        now_ist_min  = (int(time.time()) // 60 + 330) % (24 * 60)
-        elapsed_min  = min(max(now_ist_min - 555, 1), 375)
+        # Use the active trading date's wall-clock position for elapsed calc;
+        # in dry-run mode we estimate elapsed as end-of-day (375 min).
+        if _active_date == date.today():
+            now_ist_min  = (int(time.time()) // 60 + 330) % (24 * 60)
+            elapsed_min  = min(max(now_ist_min - 555, 1), 375)
+        else:
+            elapsed_min = 375  # full session elapsed for dry-run
         elapsed_frac = elapsed_min / 375.0
 
         rows = []
@@ -106,83 +124,70 @@ def main():
             if avg_daily <= 0:
                 continue
 
-            ratio = today_vol / (avg_daily * elapsed_frac)
-
+            ratio   = today_vol / (avg_daily * elapsed_frac)
             bars    = today_bars.get(symbol)
             tracker = rvol_trackers.get(symbol)
 
-            # Bar RVOL — volume spike on most recent bar
+            # Bar RVOL — volume spike on most recent bar vs same time-slot historical avg
             bar_rvol = 0.0
             if bars and tracker:
                 last_b   = bars[-1]
                 bar_rvol = tracker.bar_rvol(last_b.get('ts', 0), last_b.get('volume', 0.0))
 
-            # Price RVOL — price-range spike on most recent bar
-            price_rvol = 0.0
-            if bars and tracker:
-                last_b     = bars[-1]
-                price_rvol = tracker.bar_price_rvol(
-                    last_b.get('ts', 0), last_b.get('high', 0.0),
-                    last_b.get('low', 0.0), last_b.get('open', 0.0),
-                )
-
-            # Today's intraday range vs historical avg daily range
-            day_range_pct  = 0.0
-            day_range_rvol = 0.0
+            # Today's intraday range %
+            day_range_pct = 0.0
             open_p = today_opens.get(symbol, 0.0)
             if open_p > 0:
                 h = today_highs.get(symbol, 0.0)
                 l = today_lows.get(symbol, 0.0)
                 if h > l > 0:
                     day_range_pct = round((h - l) / open_p * 100, 2)
-                    avg_dr = avg_daily_ranges.get(symbol, 0.0)
-                    if avg_dr > 0:
-                        day_range_rvol = round(day_range_pct / avg_dr, 2)
 
-            # Peak price RVOL event today (with time)
-            peak_ev   = peak_price_rvols.get(symbol)
-            peak_rvol = peak_ev['rvol']   if peak_ev else 0.0
-            peak_pct  = peak_ev['pct']    if peak_ev else 0.0
-            peak_time = _ist_time(peak_ev['ts']) if peak_ev else ''
+            # Overnight change (live % from previous day's close)
+            o_chg = overnight_chg.get(symbol, 0.0)
 
-            # Consolidation break event (with time)
-            cb_ev     = consol_breaks.get(symbol)
-            cb_ratio  = cb_ev['ratio'] if cb_ev else 0.0
-            cb_pct    = cb_ev['pct']   if cb_ev else 0.0
-            cb_time   = _ist_time(cb_ev['ts']) if cb_ev else ''
+            # Peak momentum event (best % move in any 1-5 bar window today)
+            mom_ev        = peak_momentum.get(symbol)
+            peak_mom_pct  = mom_ev['pct']    if mom_ev else 0.0
+            peak_mom_win  = mom_ev['window'] if mom_ev else 0
+            peak_mom_time = _ist_time(mom_ev['ts']) if mom_ev else ''
 
-            # Opening move / in-play flag (with time)
-            ip_ev     = in_play_stocks.get(symbol)
-            ip_pct    = ip_ev['pct']  if ip_ev else 0.0
-            ip_time   = _ist_time(ip_ev['ts']) if ip_ev else ''
+            # Range speed — % of avg daily range covered and how fast
+            rs_ev       = range_speed.get(symbol)
+            rs_coverage = rs_ev['coverage']     if rs_ev else 0.0
+            rs_elapsed  = rs_ev['elapsed_mins'] if rs_ev else 0
+
+            # Consolidation break event
+            cb_ev    = consol_breaks.get(symbol)
+            cb_ratio = cb_ev['ratio'] if cb_ev else 0.0
+            cb_pct   = cb_ev['pct']   if cb_ev else 0.0
+            cb_time  = _ist_time(cb_ev['ts']) if cb_ev else ''
 
             # Buyer/seller split from last ≤10 bars
             buyer_pct = 0.5
             if bars:
                 tv = 0.0; tb = 0.0
-                for b in bars:
-                    vol = b.get('volume', 0.0)
-                    rng = max(b.get('high', 0.0) - b.get('low', 0.0), 1e-6)
-                    tv += vol
-                    tb += vol * max(b.get('close', 0.0) - b.get('low', 0.0), 0.0) / rng
+                for bar_d in bars:
+                    vol_b = bar_d.get('volume', 0.0)
+                    rng   = max(bar_d.get('high', 0.0) - bar_d.get('low', 0.0), 1e-6)
+                    tv   += vol_b
+                    tb   += vol_b * max(bar_d.get('close', 0.0) - bar_d.get('low', 0.0), 0.0) / rng
                 if tv > 0:
                     buyer_pct = tb / tv
 
             rows.append({
                 'symbol':        symbol,
                 'bar_rvol':      round(bar_rvol, 1),
-                'price_rvol':    round(price_rvol, 1),
+                'overnight_chg': o_chg,
+                'peak_mom_pct':  peak_mom_pct,
+                'peak_mom_win':  peak_mom_win,
+                'peak_mom_time': peak_mom_time,
+                'rs_coverage':   rs_coverage,
+                'rs_elapsed':    rs_elapsed,
                 'day_range_pct': day_range_pct,
-                'day_range_rvol': day_range_rvol,
-                'avg_day_range': round(avg_daily_ranges.get(symbol, 0.0), 2),
-                'peak_rvol':     peak_rvol,
-                'peak_pct':      peak_pct,
-                'peak_time':     peak_time,
                 'cb_ratio':      cb_ratio,
                 'cb_pct':        cb_pct,
                 'cb_time':       cb_time,
-                'ip_pct':        ip_pct,
-                'ip_time':       ip_time,
                 'ratio':         round(ratio, 2),
                 'today_vol':     round(today_vol),
                 'avg_daily':     round(avg_daily),
@@ -191,7 +196,7 @@ def main():
                 'seller_pct':    round(1.0 - buyer_pct, 3),
             })
 
-        rows.sort(key=lambda x: x['bar_rvol'], reverse=True)
+        rows.sort(key=lambda x: x['overnight_chg'], reverse=True)
         return rows
 
     # ── callbacks ─────────────────────────────────────────────────────────────
@@ -199,8 +204,8 @@ def main():
     def on_alert(alert: Alert):
         today_vol = today_volumes.get(alert.symbol, 0.0)
         avg_vol   = avg_volumes.get(alert.symbol, 0.0)
-        # Only attach live context when the alert is from today
-        if date.fromtimestamp(alert.ts) == date.today():
+        # Attach live context for alerts on the active trading date
+        if date.fromtimestamp(alert.ts) == _active_date:
             alert.today_volume = today_vol
             alert.rel_volume   = (today_vol / avg_vol) if avg_vol > 0 else 0.0
             open_p = today_opens.get(alert.symbol, 0.0)
@@ -228,13 +233,15 @@ def main():
         bar_ts = b.get('ts', b.get('timestamp', 0))
 
         if tf == 1:
-            vol    = b.get('volume', 0.0)
-            high   = b.get('high', 0.0)
-            low    = b.get('low', 0.0)
-            open_p = b.get('open', 0.0)
-            is_today_bar = date.fromtimestamp(bar_ts) == date.today()
+            vol      = b.get('volume', 0.0)
+            high     = b.get('high', 0.0)
+            low      = b.get('low', 0.0)
+            open_p   = b.get('open', 0.0)
+            close    = b.get('close', 0.0)
+            bar_date = date.fromtimestamp(bar_ts)
+            is_active_bar = (bar_date == _active_date)
 
-            if is_today_bar:
+            if is_active_bar:
                 # Cumulative volume + recent bars
                 today_volumes[symbol] = today_volumes.get(symbol, 0.0) + vol
                 if symbol not in today_bars:
@@ -249,51 +256,69 @@ def main():
                 if symbol not in today_lows or low < today_lows[symbol]:
                     today_lows[symbol] = low
 
-                # Bar range %
+                # Overnight change (live %, updated each bar)
+                prev_c = prev_closes.get(symbol, 0.0)
+                if prev_c > 0 and close > 0:
+                    overnight_chg[symbol] = round((close - prev_c) / prev_c * 100, 2)
+
+                # Bar range % vs open
                 ref = open_p if open_p > 0 else (low if low > 0 else 1.0)
                 bar_range_pct = (high - low) / ref * 100 if (high > low and ref > 0) else 0.0
 
-                # Rolling range window for consolidation detection
+                # Momentum: best % range in any 1-5 consecutive bars
+                if symbol not in bar_history:
+                    bar_history[symbol] = deque(maxlen=5)
+                bar_history[symbol].append({'open': open_p, 'high': high, 'low': low, 'ts': bar_ts})
+                hist = list(bar_history[symbol])
+                best_pct = 0.0
+                best_win = 1
+                for n in range(1, len(hist) + 1):
+                    win = hist[-n:]
+                    ref_o = win[0]['open']
+                    if ref_o > 0:
+                        move = (max(w['high'] for w in win) - min(w['low'] for w in win)) / ref_o * 100
+                        if move > best_pct:
+                            best_pct = move
+                            best_win = n
+                if best_pct > peak_momentum.get(symbol, {}).get('pct', 0.0):
+                    peak_momentum[symbol] = {'ts': bar_ts, 'pct': round(best_pct, 2), 'window': best_win}
+
+                # Range speed: % of avg daily range covered and how fast
+                h_t = today_highs.get(symbol, 0.0)
+                l_t = today_lows.get(symbol, 0.0)
+                op_t = today_opens.get(symbol, open_p)
+                if op_t > 0 and h_t > l_t:
+                    today_rng = (h_t - l_t) / op_t * 100
+                    avg_dr    = avg_daily_ranges.get(symbol, 0.0)
+                    if avg_dr > 0:
+                        coverage = round(today_rng / avg_dr * 100, 1)
+                        m_ist    = (bar_ts // 60 + 330) % (24 * 60)
+                        elapsed  = max(m_ist - 555, 1)
+                        existing_rs = range_speed.get(symbol)
+                        if existing_rs is None or coverage > existing_rs.get('coverage', 0.0):
+                            range_speed[symbol] = {'ts': bar_ts, 'coverage': coverage, 'elapsed_mins': elapsed}
+
+                # Consolidation break: current bar ≥3× avg of last 10 bars before it
                 if symbol not in rolling_bar_ranges:
                     rolling_bar_ranges[symbol] = deque(maxlen=20)
                 rolling_bar_ranges[symbol].append(bar_range_pct)
+                rng_list = list(rolling_bar_ranges[symbol])
+                if len(rng_list) >= 8:
+                    prev_bars = rng_list[-min(11, len(rng_list)):-1]
+                    if len(prev_bars) >= 5:
+                        prev_avg = sum(prev_bars) / len(prev_bars)
+                        if prev_avg > 0 and bar_range_pct / prev_avg >= 3.0 and bar_range_pct >= 0.15:
+                            consol_breaks[symbol] = {
+                                'ts':    bar_ts,
+                                'ratio': round(bar_range_pct / prev_avg, 1),
+                                'pct':   round(bar_range_pct, 2),
+                            }
 
-                rng_win = rolling_bar_ranges[symbol]
-                if len(rng_win) >= 6 and bar_range_pct >= 0.3:
-                    prev_list = list(rng_win)[:-1]
-                    prev_avg  = sum(prev_list) / len(prev_list)
-                    if prev_avg > 0 and bar_range_pct / prev_avg >= 3.0:
-                        consol_breaks[symbol] = {
-                            'ts':    bar_ts,
-                            'ratio': round(bar_range_pct / prev_avg, 1),
-                            'pct':   round(bar_range_pct, 2),
-                        }
-
-                # Price RVOL for this bar (only after baselines are ready)
-                tracker = rvol_trackers.get(symbol)
-                price_rvol_val = 0.0
-                if tracker and is_live:
-                    price_rvol_val = tracker.bar_price_rvol(bar_ts, high, low, open_p)
-                    existing_peak  = peak_price_rvols.get(symbol)
-                    if price_rvol_val > (existing_peak['rvol'] if existing_peak else 0.0):
-                        peak_price_rvols[symbol] = {
-                            'ts':   bar_ts,
-                            'rvol': round(price_rvol_val, 1),
-                            'pct':  round(bar_range_pct, 2),
-                        }
-
-                # In-play: big opening move in first 10 bars (09:15–09:24)
-                m_ist = (bar_ts // 60 + 330) % (24 * 60)
-                if m_ist - 555 <= 9 and symbol not in in_play_stocks:
-                    op = today_opens.get(symbol, open_p)
-                    if op > 0:
-                        op_range = (today_highs.get(symbol, high) - today_lows.get(symbol, low)) / op * 100
-                        if op_range >= 3.0:
-                            in_play_stocks[symbol] = {'ts': bar_ts, 'pct': round(op_range, 1)}
             else:
-                # Historical bar — accumulate per-day OHLC for avg daily range
+                # Historical bar — accumulate baselines during bootstrap
                 if not is_live:
-                    d_str    = str(date.fromtimestamp(bar_ts))
+                    _bootstrap_prev_close[symbol] = close
+                    d_str    = str(bar_date)
                     sym_days = _bootstrap_days.setdefault(symbol, {})
                     if d_str not in sym_days:
                         sym_days[d_str] = {'high': high, 'low': low, 'open': open_p}
@@ -301,7 +326,7 @@ def main():
                         if high > sym_days[d_str]['high']: sym_days[d_str]['high'] = high
                         if low  < sym_days[d_str]['low']:  sym_days[d_str]['low']  = low
 
-            # Feed to RVOL tracker during bootstrap (volume + price range)
+            # Feed RVOL tracker during bootstrap (used for bar_rvol in live mode)
             tracker = rvol_trackers.get(symbol)
             if tracker is not None and not is_live:
                 tracker.add_historical(bar_ts, vol, high, low, open_p)
@@ -390,6 +415,10 @@ def main():
             avg_daily_ranges[sym] = sum(day_ranges) / len(day_ranges)
     _bootstrap_days.clear()
     logger.info('Avg daily range baselines ready: %d symbols', len(avg_daily_ranges))
+
+    prev_closes.update(_bootstrap_prev_close)
+    _bootstrap_prev_close.clear()
+    logger.info('Prev closes ready: %d symbols', len(prev_closes))
 
     # If bhavcopy gave us zero avg_daily_volume (column name mismatch etc.),
     # fall back to deriving it from the RVOL tracker: hist_mean × 375 bars/session.
