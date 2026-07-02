@@ -46,8 +46,9 @@ def main():
             logger.error('Config: %s', e)
         sys.exit(1)
 
+    _here = os.path.dirname(os.path.abspath(__file__))
     ctx       = DhanContext(Config.DHAN_CLIENT_ID, Config.DHAN_ACCESS_TOKEN)
-    alert_mgr = AlertManager()
+    alert_mgr = AlertManager(persist_dir=_here)
 
     # ── state stores ─────────────────────────────────────────────────────────
     ind_sets: dict[tuple, IndicatorSet]   = {}
@@ -79,7 +80,6 @@ def main():
     if _active_date != date.today():
         logger.info('Dry-run mode — replaying %s (today is %s)', _active_date, date.today())
 
-    _here = os.path.dirname(os.path.abspath(__file__))
     _state_file = os.path.join(_here, f"movers_{_active_date}.json")
 
     # Today's intraday volume (cumulative shares) — used for MACD alert rel_volume
