@@ -151,6 +151,9 @@ th.sort-on.asc::after{content:' ▲'}
   <span class="fl" style="margin-left:8px">Day Rng ≥</span>
   <input id="range-input" type="number" min="0" step="0.5" value="0" class="num-in">
   <span class="fl">%</span>
+  <span class="fl" style="margin-left:8px">MOM ≥</span>
+  <input id="mom-input" type="number" min="0" step="0.5" value="0" class="num-in">
+  <span class="fl">%</span>
 </div>
 <div class="scroller">
 <table>
@@ -330,7 +333,7 @@ setInterval(fetchLeaderboard, 15000);
 /* ================================================================
    Alerts
    ================================================================ */
-const F = {dir:'ALL', tf:'0', wave:'0', tier:'ALL', vol:'500000', range:'0'};
+const F = {dir:'ALL', tf:'0', wave:'0', tier:'ALL', vol:'500000', range:'0', mom:'0'};
 let alerts       = [];
 let filteredCount = 0;
 let alertSortCol = 'ts';
@@ -356,6 +359,11 @@ document.getElementById('range-input').addEventListener('input', e => {
   F.range = isNaN(v) ? '0' : String(v);
   render();
 });
+document.getElementById('mom-input').addEventListener('input', e => {
+  const v = parseFloat(e.target.value);
+  F.mom = isNaN(v) ? '0' : String(v);
+  render();
+});
 
 function emaCls(a){return a.ema_clear?'bGn':a.ema_clear_v2?'bAm':'bGy';}
 function rsiCls(a){return a.rsi_extreme?'bGn':a.rsi_extreme_v2?'bAm':'bGy';}
@@ -379,6 +387,8 @@ function ok(a){
   if (isMom) {
     if (F.dir !== 'ALL' || F.wave !== '0' || F.tier !== 'ALL') return false;
     if (F.tf !== '0' && String(a.tf) !== F.tf) return false;
+    const mt = parseFloat(F.mom);
+    if (mt > 0 && (a.pct || 0) < mt) return false;
     return true;
   }
   if (F.dir !== 'ALL' && a.direction !== F.dir) return false;
