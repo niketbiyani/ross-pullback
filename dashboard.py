@@ -112,6 +112,10 @@ th.sort-on.asc::after{content:' ▲'}
 </style>
 </head>
 <body>
+<div id="boot-banner" style="display:none;background:#1c1108;border-bottom:1px solid #92400e;
+     padding:6px 16px;font-size:12px;color:#fb923c;text-align:center;letter-spacing:.3px">
+  ⏳ Bootstrap in progress — loading bar data &amp; warming up indicators. Alerts will appear once complete.
+</div>
 <header>
   <h1>Ross Pullback Scanner</h1>
   <span id="status">connecting…</span>
@@ -453,6 +457,22 @@ function mergeAlerts(incoming) {
   render();
 }
 fetch('./api/alerts').then(r => r.json()).then(d => { alerts = d; render(); });
+
+/* ================================================================
+   Bootstrap banner — poll until is_live
+   ================================================================ */
+function checkBootstrap() {
+  fetch('./api/debug').then(r => r.json()).then(d => {
+    const banner = document.getElementById('boot-banner');
+    if (d.is_live) {
+      banner.style.display = 'none';
+    } else {
+      banner.style.display = 'block';
+      setTimeout(checkBootstrap, 3000);
+    }
+  }).catch(() => setTimeout(checkBootstrap, 5000));
+}
+checkBootstrap();
 
 /* ================================================================
    SSE
