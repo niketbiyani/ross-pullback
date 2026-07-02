@@ -199,13 +199,14 @@ th.sort-on.asc::after{content:' ▲'}
   <th class="sortable" data-tbl="lb" data-col="bar_rvol">Vol RVOL</th>
   <th class="sortable sort-on" data-tbl="lb" data-col="overnight_chg">Overnight</th>
   <th class="sortable" data-tbl="lb" data-col="peak_mom_pct">Momentum</th>
+  <th class="sortable" data-tbl="lb" data-col="peak_mom_time">Mom Time</th>
   <th class="sortable" data-tbl="lb" data-col="rs_coverage">Rng Speed</th>
   <th class="sortable" data-tbl="lb" data-col="day_range_pct">Day Rng %</th>
   <th class="sortable" data-tbl="lb" data-col="ratio">Cum RVOL</th>
   <th class="sortable" data-tbl="lb" data-col="today_vol">Today Vol</th>
 </tr></thead>
 <tbody id="lb-tbody">
-  <tr class="lb-empty"><td colspan="9">Waiting for alerts…</td></tr>
+  <tr class="lb-empty"><td colspan="10">Waiting for alerts…</td></tr>
 </tbody>
 </table>
 </div>
@@ -293,7 +294,7 @@ function renderLeaderboard() {
   document.getElementById('lb-count').textContent = rows.length + ' symbols';
   const tbody = document.getElementById('lb-tbody');
   if (!rows.length) {
-    tbody.innerHTML = '<tr class="lb-empty"><td colspan="9">No alerts yet — leaderboard populates as signals fire</td></tr>';
+    tbody.innerHTML = '<tr class="lb-empty"><td colspan="10">No alerts yet — leaderboard populates as signals fire</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map((r, i) => {
@@ -304,7 +305,10 @@ function renderLeaderboard() {
       : '<span style="color:#1f2937">—</span>';
     const momStr = r.peak_mom_pct
       ? `<span class="${r.peak_mom_pct>=3?'ratio-hi':r.peak_mom_pct>=1.5?'ratio-md':'ratio-lo'}">${r.peak_mom_pct.toFixed(2)}%</span>`
-        + ` <span style="color:#4b5563;font-size:10px">${r.peak_mom_win}b @${r.peak_mom_time}</span>`
+        + ` <span style="color:#4b5563;font-size:10px">${r.peak_mom_win}b</span>`
+      : '<span style="color:#1f2937">—</span>';
+    const momTimeStr = r.peak_mom_time
+      ? `<span style="color:#60a5fa;font-size:11px">${r.peak_mom_time}</span>`
       : '<span style="color:#1f2937">—</span>';
     const rsStr = r.rs_coverage
       ? `<span style="color:#60a5fa">${r.rs_coverage.toFixed(0)}%</span>`
@@ -316,6 +320,7 @@ function renderLeaderboard() {
       <td class="${barRvolCls(brvol)}">${brvol.toFixed(1)}×</td>
       <td>${ocStr}</td>
       <td>${momStr}</td>
+      <td>${momTimeStr}</td>
       <td>${rsStr}</td>
       <td style="color:#9ca3af">${r.day_range_pct>0?r.day_range_pct.toFixed(2)+'%':'—'}</td>
       <td class="${ratioCls(r.ratio)}">${r.ratio.toFixed(2)}×</td>
