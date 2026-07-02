@@ -11,7 +11,9 @@ Usage:
 Dashboard:
     http://localhost:5050
 """
+import json
 import logging
+import os
 import sys
 import threading
 import time
@@ -77,6 +79,9 @@ def main():
     if _active_date != date.today():
         logger.info('Dry-run mode — replaying %s (today is %s)', _active_date, date.today())
 
+    _here = os.path.dirname(os.path.abspath(__file__))
+    _state_file = os.path.join(_here, f"movers_{_active_date}.json")
+
     # Today's intraday volume (cumulative shares) — used for MACD alert rel_volume
     today_volumes: dict[str, float] = {}
     avg_volumes:   dict[str, float] = {}
@@ -108,6 +113,40 @@ def main():
 
     _bootstrap_days:       dict[str, dict[str, dict]] = {}
     _bootstrap_prev_close: dict[str, float]           = {}
+
+    # ── state persistence (survives scanner restarts within same trading day) ──
+
+    def _load_state():
+        try:
+            if not os.path.exists(_state_file):
+                return
+            with open(_state_file) as f:
+                data = json.load(f)
+            alerted_symbols.update(data.get('alerted_symbols', []))
+            for sym, v in data.get('peak_momentum', {}).items():
+                if v.get('pct', 0) > peak_momentum.get(sym, {}).get('pct', 0):
+                    peak_momentum[sym] = v
+            logger.info('Restored movers state: %d alerted symbols, %d momentum peaks',
+                        len(alerted_symbols), len(peak_momentum))
+        except Exception as e:
+            logger.warning('Failed to load movers state: %s', e)
+
+    def _save_state():
+        try:
+            with open(_state_file, 'w') as f:
+                json.dump({
+                    'alerted_symbols': list(alerted_symbols),
+                    'peak_momentum':   peak_momentum,
+                }, f)
+            # Clean up previous-day state files
+            for fn in os.listdir(_here):
+                if fn.startswith('movers_') and fn.endswith('.json') and fn != os.path.basename(_state_file):
+                    try:
+                        os.remove(os.path.join(_here, fn))
+                    except OSError:
+                        pass
+        except Exception as e:
+            logger.warning('Failed to save movers state: %s', e)
 
     # ── leaderboard computation ───────────────────────────────────────────────
 
@@ -438,6 +477,7 @@ def main():
     rvol_trackers.update({s['symbol']: RvolTracker(s['symbol']) for s in symbols})
 
     # ── bootstrap ─────────────────────────────────────────────────────────────
+    _load_state()  # restore alerted_symbols + peak_momentum from previous run today
     bootstrap(ctx, symbols, on_bar)
 
     for t in rvol_trackers.values():
@@ -483,12 +523,14 @@ def main():
     try:
         while True:
             time.sleep(300)
+            _save_state()
             logger.info('Heartbeat — engines: %d (1m)  alerts: %d  leaderboard symbols: %d',
                         len([k for k in engines if k[1] == 1]),
                         len(alert_mgr.get_all()),
                         len(today_bars))
     except KeyboardInterrupt:
         logger.info('Shutting down...')
+        _save_state()
         feed.stop()
 
 
