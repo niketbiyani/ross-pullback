@@ -176,6 +176,7 @@ class StrategyEngine:
             sl_anchor = (int(np.argmin(macds)) if direction == 'DOWN'
                          else int(np.argmax(macds)))
 
+        self._pending.clear()  # keep only the latest cross; discard stale pending entries
         self._pending.append({'rel': rel, 'swing': swing, 'sl_anchor': sl_anchor})
 
     # ── entry detection ───────────────────────────────────────────────────────
