@@ -104,6 +104,7 @@ def main():
     bar_history:   dict[str, deque] = {}  # 5-bar rolling window for momentum calc
     peak_momentum: dict[str, dict]  = {}  # best multi-bar % move on _active_date
     range_speed:   dict[str, dict]  = {}  # how fast stock covered its avg daily range
+    mom_last_fired: dict[str, int]  = {}  # last bar_ts at which a MOM alert fired per symbol
 
     alerted_symbols: set[str] = set()     # symbols with any alert (MACD or MOM) today
 
@@ -338,9 +339,13 @@ def main():
                 if best_pct > peak_momentum.get(symbol, {}).get('pct', 0.0):
                     peak_momentum[symbol] = {'ts': bar_ts, 'pct': round(best_pct, 2), 'window': best_win}
 
-                # Fire a MOM alert on every bar where ≥3% move is detected
+                # Any ≥3% move immediately qualifies symbol for Movers leaderboard
                 if best_pct >= 3.0:
                     alerted_symbols.add(symbol)
+
+                # Fire a MOM alert (Alerts tab) at most once per 5 minutes per symbol
+                if best_pct >= 3.0 and bar_ts - mom_last_fired.get(symbol, 0) >= 300:
+                    mom_last_fired[symbol] = bar_ts
                     alert_mgr.add_event({
                         'alert_type': 'MOM',
                         'symbol':     symbol,
