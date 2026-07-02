@@ -104,7 +104,6 @@ def main():
     bar_history:   dict[str, deque] = {}  # 5-bar rolling window for momentum calc
     peak_momentum: dict[str, dict]  = {}  # best multi-bar % move on _active_date
     range_speed:   dict[str, dict]  = {}  # how fast stock covered its avg daily range
-    mom_last_fired: dict[str, int]  = {}  # last bar_ts at which a MOM alert fired per symbol
 
     alerted_symbols: set[str] = set()     # symbols with any alert (MACD or MOM) today
 
@@ -339,14 +338,8 @@ def main():
                 if best_pct > peak_momentum.get(symbol, {}).get('pct', 0.0):
                     peak_momentum[symbol] = {'ts': bar_ts, 'pct': round(best_pct, 2), 'window': best_win}
 
-                # Fire a MOM alert when ≥3% move, at most once per 5 minutes per symbol
+                # Fire a MOM alert on every bar where ≥3% move is detected
                 if best_pct >= 3.0:
-                    since = bar_ts - mom_last_fired.get(symbol, 0)
-                    if since < 300:
-                        logger.info('MOM suppressed %s %.2f%% — cooldown %ds remaining',
-                                    symbol, best_pct, 300 - since)
-                if best_pct >= 3.0 and bar_ts - mom_last_fired.get(symbol, 0) >= 300:
-                    mom_last_fired[symbol] = bar_ts
                     alerted_symbols.add(symbol)
                     alert_mgr.add_event({
                         'alert_type': 'MOM',
@@ -526,7 +519,6 @@ def main():
             if not bars:
                 continue
             bh = deque(maxlen=5)
-            last_fired = 0
             vol_total = 0.0
             t_high = 0.0
             t_low = float('inf')
@@ -561,8 +553,7 @@ def main():
                             best_win = n
                 if best_pct > peak_momentum.get(name, {}).get('pct', 0.0):
                     peak_momentum[name] = {'ts': ts, 'pct': round(best_pct, 2), 'window': best_win}
-                if best_pct >= 3.0 and ts - last_fired >= 300:
-                    last_fired = ts
+                if best_pct >= 3.0:
                     was_new = name not in alerted_symbols
                     alerted_symbols.add(name)
                     if was_new:
