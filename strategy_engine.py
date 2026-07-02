@@ -137,10 +137,14 @@ class StrategyEngine:
         prev, cur = ep[rel - 1], ep[rel]
         if prev.macd < prev.signal and cur.macd > cur.signal:
             self._all_crosses.append((rel, 'up'))
+            logger.debug("[%s %dm] CROSS up  rel=%d  ts=%d  macd=%.4f sig=%.4f  ep_dir=%s",
+                         self.symbol, self.tf, rel, cur.ts, cur.macd, cur.signal, self._ep_dir)
             if self._ep_dir == 'DOWN':
                 self._on_wave_cross(rel)
         elif prev.macd > prev.signal and cur.macd < cur.signal:
             self._all_crosses.append((rel, 'down'))
+            logger.debug("[%s %dm] CROSS down rel=%d  ts=%d  macd=%.4f sig=%.4f  ep_dir=%s",
+                         self.symbol, self.tf, rel, cur.ts, cur.macd, cur.signal, self._ep_dir)
             if self._ep_dir == 'UP':
                 self._on_wave_cross(rel)
 
@@ -150,10 +154,13 @@ class StrategyEngine:
         cur       = ep[rel]
 
         if direction == 'DOWN' and (cur.macd >= 0 or cur.signal >= 0):
+            logger.debug("[%s %dm] CROSS rejected: signs not both neg at rel=%d", self.symbol, self.tf, rel)
             return
         if direction == 'UP'   and (cur.macd <= 0 or cur.signal <= 0):
+            logger.debug("[%s %dm] CROSS rejected: signs not both pos at rel=%d", self.symbol, self.tf, rel)
             return
         if rel + 1 < Config.EPISODE_MIN_BARS:
+            logger.debug("[%s %dm] CROSS rejected: ep too short (%d < %d) at rel=%d", self.symbol, self.tf, rel + 1, Config.EPISODE_MIN_BARS, rel)
             return
 
         swing = (min(b.low  for b in ep[:rel + 1]) if direction == 'DOWN'
@@ -161,8 +168,10 @@ class StrategyEngine:
 
         if self._prev_entry_price is not None:
             if direction == 'DOWN' and swing >= self._prev_entry_price:
+                logger.debug("[%s %dm] CROSS rejected: swing %.2f >= prev_entry %.2f at rel=%d", self.symbol, self.tf, swing, self._prev_entry_price, rel)
                 return
             if direction == 'UP'   and swing <= self._prev_entry_price:
+                logger.debug("[%s %dm] CROSS rejected: swing %.2f <= prev_entry %.2f at rel=%d", self.symbol, self.tf, swing, self._prev_entry_price, rel)
                 return
 
         ep_seg = ep[:rel + 1]
@@ -171,6 +180,8 @@ class StrategyEngine:
         else:
             sl_anchor = int(np.argmax([b.high for b in ep_seg]))
 
+        logger.debug("[%s %dm] PENDING added: rel=%d ts=%d swing=%.2f sl_anchor=%d pending_count=%d",
+                     self.symbol, self.tf, rel, cur.ts, swing, sl_anchor, len(self._pending) + 1)
         self._pending.append({'rel': rel, 'swing': swing, 'sl_anchor': sl_anchor})
 
     # ── entry detection ───────────────────────────────────────────────────────
@@ -200,7 +211,10 @@ class StrategyEngine:
                 sl_distance = entry_price - sl_level
 
             sl_pct = sl_distance / entry_price if entry_price > 0 else 0.0
+            logger.debug("[%s %dm] FIRE check: cross_rel=%d cur_rel=%d entry=%.2f swing=%.2f sl=%.2f sl_pct=%.3f pending=%d",
+                         self.symbol, self.tf, pc['rel'], cur_rel, entry_price, swing, sl_level, sl_pct, len(self._pending))
             if sl_pct < Config.SL_MIN_PCT or sl_pct > Config.SL_MAX_PCT:
+                logger.debug("[%s %dm] FIRE skipped (sl_pct %.3f out of range)", self.symbol, self.tf, sl_pct)
                 self._prev_entry_price = entry_price
                 fired.append(pc)
                 continue
