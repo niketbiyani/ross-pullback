@@ -480,21 +480,26 @@ checkBootstrap();
 /* ================================================================
    SSE
    ================================================================ */
-const es = new EventSource('./stream');
-es.onopen = () => {
-  const s = document.getElementById('status');
-  s.textContent = 'live'; s.className = 'live';
-  fetch('./api/alerts').then(r => r.json()).then(mergeAlerts);
-};
-es.onerror = () => {
-  document.getElementById('status').textContent = 'reconnecting…';
-  document.getElementById('status').className = '';
-};
-es.addEventListener('alert', e => {
-  alerts.unshift(JSON.parse(e.data));
-  if (alerts.length > 5000) alerts.pop();
-  render();
-});
+function connectSSE() {
+  const es = new EventSource('./stream');
+  es.onopen = () => {
+    const s = document.getElementById('status');
+    s.textContent = 'live'; s.className = 'live';
+    fetch('./api/alerts').then(r => r.json()).then(mergeAlerts).catch(() => {});
+  };
+  es.onerror = () => {
+    document.getElementById('status').textContent = 'reconnecting…';
+    document.getElementById('status').className = '';
+    es.close();
+    setTimeout(connectSSE, 3000);
+  };
+  es.addEventListener('alert', e => {
+    alerts.unshift(JSON.parse(e.data));
+    if (alerts.length > 5000) alerts.pop();
+    render();
+  });
+}
+connectSSE();
 </script>
 </body>
 </html>
@@ -508,7 +513,9 @@ def create_app(alert_mgr: AlertManager,
 
     @app.route('/')
     def index():
-        return _HTML
+        resp = Response(_HTML, mimetype='text/html')
+        resp.headers['Cache-Control'] = 'no-store'
+        return resp
 
     @app.route('/api/alerts')
     def api_alerts():
@@ -529,13 +536,20 @@ def create_app(alert_mgr: AlertManager,
         q = alert_mgr.subscribe()
 
         def gen():
-            yield 'data: connected\n\n'
-            while True:
-                if q:
-                    yield f'event: alert\ndata: {json.dumps(q.popleft())}\n\n'
-                else:
-                    time.sleep(0.1)
-                    yield ': keepalive\n\n'
+            try:
+                yield 'data: connected\n\n'
+                last_ka = time.time()
+                while True:
+                    if q:
+                        yield f'event: alert\ndata: {json.dumps(q.popleft())}\n\n'
+                        last_ka = time.time()
+                    else:
+                        time.sleep(0.25)
+                        if time.time() - last_ka >= 15:
+                            yield ': keepalive\n\n'
+                            last_ka = time.time()
+            finally:
+                alert_mgr.unsubscribe(q)
 
         return Response(
             gen(), mimetype='text/event-stream',
