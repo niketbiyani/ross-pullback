@@ -298,8 +298,10 @@ def main():
             is_active_bar = (bar_date == _active_date)
 
             if is_active_bar:
-                # Cumulative volume + recent bars
-                today_volumes[symbol] = today_volumes.get(symbol, 0.0) + vol
+                # Volume accumulated bar-by-bar during live only;
+                # Phase 1 pre-populates from cache and on_volume_update refreshes it.
+                if is_live:
+                    today_volumes[symbol] = today_volumes.get(symbol, 0.0) + vol
                 if symbol not in today_bars:
                     today_bars[symbol] = deque(maxlen=10)
                 today_bars[symbol].append(b)
@@ -482,106 +484,110 @@ def main():
 
     rvol_trackers.update({s['symbol']: RvolTracker(s['symbol']) for s in symbols})
 
-    # ── bootstrap ─────────────────────────────────────────────────────────────
-    _load_state()  # restore alerted_symbols + peak_momentum from previous run today
-    bootstrap(ctx, symbols, on_bar)
-
-    for t in rvol_trackers.values():
-        t.finalize()
-    logger.info('RVOL baselines ready: %d symbols', len(rvol_trackers))
-
-    # Compute avg daily range % from bootstrap per-day data
-    for sym, days in _bootstrap_days.items():
-        day_ranges = []
-        for d_data in days.values():
-            if d_data['open'] > 0 and d_data['high'] > d_data['low']:
-                day_ranges.append((d_data['high'] - d_data['low']) / d_data['open'] * 100)
-        if day_ranges:
-            avg_daily_ranges[sym] = sum(day_ranges) / len(day_ranges)
-    _bootstrap_days.clear()
-    logger.info('Avg daily range baselines ready: %d symbols', len(avg_daily_ranges))
-
-    prev_closes.update(_bootstrap_prev_close)
-    _bootstrap_prev_close.clear()
-    logger.info('Prev closes ready: %d symbols', len(prev_closes))
-
-    # If bhavcopy gave us zero avg_daily_volume (column name mismatch etc.),
-    # fall back to deriving it from the RVOL tracker: hist_mean × 375 bars/session.
-    missing = sum(1 for sym in rvol_trackers if avg_volumes.get(sym, 0) == 0)
-    if missing > 0:
-        logger.warning('avg_daily_volume=0 for %d/%d symbols — deriving from RVOL bootstrap data',
-                       missing, len(rvol_trackers))
-        for sym, tracker in rvol_trackers.items():
-            if avg_volumes.get(sym, 0) == 0 and tracker.hist_mean > 0:
-                avg_volumes[sym] = tracker.hist_mean * 375
-
-    is_live = True
-    logger.info('Live mode active — alerts and leaderboard now updating')
-
-    def rescan_today() -> int:
-        """Re-read today's cached 1-min bars for all symbols and re-run MOM detection.
-        Adds any symbols with a ≥3% move back into alerted_symbols + peak_momentum.
-        Called from the dashboard Rescan button via /api/rescan."""
-        today = date.today().isoformat()
-        n_new = 0
+    # ── shared today-bar scan (Phase 1 + Rescan button) ─────────────────────────
+    def _scan_today_bars():
+        """Read today's cached 1-min bars for every symbol and update Movers state.
+        Used by Phase 1 (pre-bootstrap) and the dashboard Rescan button."""
+        today = _active_date.isoformat()
         for sec in symbols:
             name = sec['symbol']
-            cached = _load_cache(name)
-            bars = sorted(cached.get(today, []), key=lambda x: x['ts'])
+            bars = sorted(_load_cache(name).get(today, []), key=lambda x: x['ts'])
             if not bars:
                 continue
             bh = deque(maxlen=5)
-            vol_total = 0.0
-            t_high = 0.0
+            vol_total = t_high = t_open = t_close = 0.0
             t_low = float('inf')
-            t_open = 0.0
-            t_close = 0.0
             for b in bars:
-                ts = b.get('ts', 0)
+                ts     = b.get('ts', 0)
                 open_p = b.get('open', 0.0)
                 high   = b.get('high', 0.0)
                 low    = b.get('low', 0.0)
                 close  = b.get('close', 0.0)
                 vol    = b.get('volume', 0.0)
                 vol_total += vol
-                if t_open == 0.0:
-                    t_open = open_p
-                if high > t_high:
-                    t_high = high
-                if low > 0 and low < t_low:
-                    t_low = low
+                if t_open == 0.0:    t_open = open_p
+                if high > t_high:    t_high = high
+                if low > 0 and low < t_low: t_low = low
                 t_close = close
                 bh.append({'open': open_p, 'high': high, 'low': low, 'ts': ts})
                 hist = list(bh)
-                best_pct = 0.0
-                best_win = 1
+                best_pct = 0.0; best_win = 1
                 for n in range(1, len(hist) + 1):
-                    win  = hist[-n:]
-                    ref  = win[0]['open']
+                    win = hist[-n:]; ref = win[0]['open']
                     if ref > 0:
                         move = (max(w['high'] for w in win) - min(w['low'] for w in win)) / ref * 100
-                        if move > best_pct:
-                            best_pct = move
-                            best_win = n
+                        if move > best_pct: best_pct = move; best_win = n
                 if best_pct > peak_momentum.get(name, {}).get('pct', 0.0):
                     peak_momentum[name] = {'ts': ts, 'pct': round(best_pct, 2), 'window': best_win}
                 if best_pct >= 3.0:
-                    was_new = name not in alerted_symbols
                     alerted_symbols.add(name)
-                    if was_new:
-                        n_new += 1
-            # Sync OHLCV into shared state so leaderboard is correct
-            if vol_total > 0:
-                today_volumes[name] = vol_total
-            if t_high > 0:
-                today_highs[name] = t_high
-            if t_low < float('inf') and t_low > 0:
-                today_lows[name] = t_low
-            if t_open > 0 and name not in today_opens:
-                today_opens[name] = t_open
+            if vol_total > 0:   today_volumes[name]  = vol_total
+            if t_high  > 0:     today_highs[name]    = t_high
+            if t_low   < float('inf') and t_low > 0: today_lows[name] = t_low
+            if t_open  > 0 and name not in today_opens: today_opens[name] = t_open
             prev_c = prev_closes.get(name, 0.0)
             if prev_c > 0 and t_close > 0:
                 overnight_chg[name] = round((t_close - prev_c) / prev_c * 100, 2)
+
+    # ── Phase 1: instant Movers from disk cache ───────────────────────────────
+    _load_state()  # restore alerted_symbols + peak_momentum from previous run today
+    _scan_today_bars()
+    logger.info('Phase 1 complete — %d movers pre-populated, dashboard live', len(alerted_symbols))
+
+    # ── Phase 2: full bootstrap in background ────────────────────────────────
+    _bootstrap_done = threading.Event()
+
+    def _run_bootstrap():
+        nonlocal is_live
+        bootstrap(ctx, symbols, on_bar)
+
+        for t in rvol_trackers.values():
+            t.finalize()
+        logger.info('RVOL baselines ready: %d symbols', len(rvol_trackers))
+
+        for sym, days in _bootstrap_days.items():
+            day_ranges = []
+            for d_data in days.values():
+                if d_data['open'] > 0 and d_data['high'] > d_data['low']:
+                    day_ranges.append((d_data['high'] - d_data['low']) / d_data['open'] * 100)
+            if day_ranges:
+                avg_daily_ranges[sym] = sum(day_ranges) / len(day_ranges)
+        _bootstrap_days.clear()
+        logger.info('Avg daily range baselines ready: %d symbols', len(avg_daily_ranges))
+
+        prev_closes.update(_bootstrap_prev_close)
+        _bootstrap_prev_close.clear()
+        logger.info('Prev closes ready: %d symbols', len(prev_closes))
+
+        missing = sum(1 for sym in rvol_trackers if avg_volumes.get(sym, 0) == 0)
+        if missing > 0:
+            logger.warning('avg_daily_volume=0 for %d/%d symbols — deriving from RVOL bootstrap data',
+                           missing, len(rvol_trackers))
+            for sym, tracker in rvol_trackers.items():
+                if avg_volumes.get(sym, 0) == 0 and tracker.hist_mean > 0:
+                    avg_volumes[sym] = tracker.hist_mean * 375
+
+        is_live = True
+        logger.info('Phase 2 complete — MACD alerts enabled, starting live feed')
+        _bootstrap_done.set()
+
+    threading.Thread(target=_run_bootstrap, daemon=True, name='Phase2Bootstrap').start()
+    logger.info('Phase 2 bootstrap running in background — Movers tab live now')
+
+    # Block main thread until Phase 2 finishes; Flask serves Movers from Phase 1 data meanwhile
+    try:
+        while not _bootstrap_done.is_set():
+            _bootstrap_done.wait(timeout=1.0)
+    except KeyboardInterrupt:
+        logger.info('Shutting down during bootstrap...')
+        _save_state()
+        return
+
+    # ── rescan (on-demand, reuses _scan_today_bars) ───────────────────────────
+    def rescan_today() -> int:
+        before = set(alerted_symbols)
+        _scan_today_bars()
+        n_new = len(alerted_symbols - before)
         _save_state()
         logger.info('Rescan today: %d new symbols added to Movers (total alerted: %d)',
                     n_new, len(alerted_symbols))
@@ -591,7 +597,6 @@ def main():
 
     # ── live feed ─────────────────────────────────────────────────────────────
     feed = LiveFeed(ctx, symbols, on_bar, on_volume_update)
-    # Seed last-seen timestamps so the live feed never replays bootstrap bars
     feed._last_ts.update(bootstrap_last_ts)
     logger.info('Live feed seeded with %d bootstrap timestamps', len(bootstrap_last_ts))
     feed.start()
