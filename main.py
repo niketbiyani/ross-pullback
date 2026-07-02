@@ -301,6 +301,11 @@ def main():
                     peak_momentum[symbol] = {'ts': bar_ts, 'pct': round(best_pct, 2), 'window': best_win}
 
                 # Fire a MOM alert when ≥3% move, at most once per 5 minutes per symbol
+                if best_pct >= 3.0:
+                    since = bar_ts - mom_last_fired.get(symbol, 0)
+                    if since < 300:
+                        logger.info('MOM suppressed %s %.2f%% — cooldown %ds remaining',
+                                    symbol, best_pct, 300 - since)
                 if best_pct >= 3.0 and bar_ts - mom_last_fired.get(symbol, 0) >= 300:
                     mom_last_fired[symbol] = bar_ts
                     alerted_symbols.add(symbol)
