@@ -165,16 +165,11 @@ class StrategyEngine:
             if direction == 'UP'   and swing <= self._prev_entry_price:
                 return
 
-        rev_dir   = 'down' if direction == 'DOWN' else 'up'
-        sl_anchor = None
-        for c2, d2 in reversed(self._all_crosses):
-            if c2 < rel and d2 == rev_dir:
-                sl_anchor = c2
-                break
-        if sl_anchor is None:
-            macds = [b.macd for b in ep[:rel + 1]]
-            sl_anchor = (int(np.argmin(macds)) if direction == 'DOWN'
-                         else int(np.argmax(macds)))
+        ep_seg = ep[:rel + 1]
+        if direction == 'DOWN':
+            sl_anchor = int(np.argmin([b.low  for b in ep_seg]))
+        else:
+            sl_anchor = int(np.argmax([b.high for b in ep_seg]))
 
         self._pending.append({'rel': rel, 'swing': swing, 'sl_anchor': sl_anchor})
 
