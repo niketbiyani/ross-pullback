@@ -199,7 +199,11 @@ def main():
         mom_key = (symbol, tf)
         if mom_key not in bar_history:
             bar_history[mom_key] = deque(maxlen=5)
-        bar_history[mom_key].append({'open': open_p, 'high': high, 'low': low, 'ts': bar_ts})
+        bh = bar_history[mom_key]
+        # Reset on day boundary — prevents overnight gaps inflating the window range
+        if bh and date.fromtimestamp(bh[-1]['ts']) != date.fromtimestamp(bar_ts):
+            bh.clear()
+        bh.append({'open': open_p, 'high': high, 'low': low, 'ts': bar_ts})
 
         hist     = list(bar_history[mom_key])
         best_pct = 0.0
@@ -310,11 +314,18 @@ def main():
     _rescan_ref: dict = {}
 
     _FNO_MOVERS_JS = r"""
-// FNO Scanner — Movers tab: remove Vol/Overnight/CumRVOL, add TF + Date columns
+// FNO Scanner — Movers tab: remove Vol/Overnight/CumRVOL, add TF filter + Date column
 (function(){
-  // Replace toolbar (keep only MOM filter, Rescan, Date)
+  var lbTfFilter = 0;   // 0 = All
+
+  // Replace toolbar (MOM filter, TF filter, Rescan, Date)
   document.getElementById('rvol-toolbar').innerHTML = [
     '<span class="lb-title">Movers — F&amp;O alerted stocks</span>',
+    '<span class="fl" style="margin-left:12px">TF:</span>',
+    '<button class="fb on" data-lbtf="0">All</button>',
+    '<button class="fb" data-lbtf="1">1m</button>',
+    '<button class="fb" data-lbtf="5">5m</button>',
+    '<button class="fb" data-lbtf="15">15m</button>',
     '<span class="fl" style="margin-left:12px">MOM ≥</span>',
     '<input id="mom-input" type="number" min="0" step="0.5" value="0" class="num-in">',
     '<span class="fl">%</span>',
@@ -324,6 +335,15 @@ def main():
     '<span id="lb-count"></span>',
     '<span id="lb-updated"></span>',
   ].join('');
+
+  document.querySelectorAll('[data-lbtf]').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      document.querySelectorAll('[data-lbtf]').forEach(function(b){ b.classList.remove('on'); });
+      btn.classList.add('on');
+      lbTfFilter = parseInt(btn.dataset.lbtf, 10);
+      renderLeaderboard();
+    });
+  });
   document.getElementById('mom-input').value = lbMinMom;
   document.getElementById('mom-input').addEventListener('input', function(e){
     lbMinMom = parseFloat(e.target.value) || 0; renderLeaderboard();
@@ -366,10 +386,14 @@ def main():
   });
   markSortHeader('lb', lbSortCol, lbSortDir);
 
-  // Override renderLeaderboard — filter by MOM only, show TF + Date
+  // Override renderLeaderboard — filter by TF and MOM, show TF + Date columns
   window.renderLeaderboard = function(){
     if (currentTab !== 'rvol') return;
-    var filtered = lbData.filter(function(r){ return (r.peak_mom_pct||0) >= lbMinMom; });
+    var filtered = lbData.filter(function(r){
+      if ((r.peak_mom_pct||0) < lbMinMom) return false;
+      if (lbTfFilter !== 0 && (r.peak_mom_tf||1) !== lbTfFilter) return false;
+      return true;
+    });
     var rows = applySort(filtered, lbSortCol, lbSortDir);
     document.getElementById('lb-count').textContent = rows.length + ' symbols';
     var tbody = document.getElementById('lb-tbody');
@@ -541,6 +565,9 @@ def main():
                     for b in bars_tf:
                         ts    = b.get('ts', 0)
                         b_day = date.fromtimestamp(ts).isoformat()
+                        # Reset on day boundary to prevent gap-up/gap-down inflating range
+                        if bh and date.fromtimestamp(bh[-1]['ts']).isoformat() != b_day:
+                            bh.clear()
                         bh.append({
                             'open': b.get('open', 0.0),
                             'high': b.get('high', 0.0),
