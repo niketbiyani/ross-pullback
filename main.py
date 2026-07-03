@@ -266,7 +266,11 @@ def main():
     # ── callbacks ─────────────────────────────────────────────────────────────
 
     def on_alert(alert: Alert):
-        # History replay builds indicator/episode state — only surface today's alerts
+        # Bootstrap replay builds indicator/episode state only — suppress all alerts.
+        # Live-feed bars (is_live=True) surface alerts; dynamic mover activation
+        # (which runs after is_live=True) surfaces today's bars from the cache.
+        if not is_live:
+            return
         if date.fromtimestamp(alert.ts) != _active_date:
             return
         today_vol = today_volumes.get(alert.symbol, 0.0)
