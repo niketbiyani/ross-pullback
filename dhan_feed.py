@@ -296,7 +296,7 @@ class LiveFeed:
         if self._on_volume is not None:
             self._on_volume(name, bars_1m)
 
-        for tf in [1, 3, 5, 15]:
+        for tf in Config.TIMEFRAMES:
             bars    = bars_1m if tf == 1 else _resample(bars_1m, tf)
             last_ts = self._last_ts.get((name, tf), 0)
             new_bars = [b for b in bars if b['ts'] > last_ts]

@@ -637,12 +637,22 @@ def create_app(alert_mgr: AlertManager,
                get_leaderboard: Callable[[], list[dict]],
                get_debug: Callable[[], dict] | None = None,
                rescan_ref: dict | None = None,
-               get_peak_momentum: Callable[[], dict] | None = None) -> Flask:
+               get_peak_momentum: Callable[[], dict] | None = None,
+               js_defaults: dict | None = None,
+               title: str | None = None) -> Flask:
+    import re as _re
+    _html = _HTML
+    if title:
+        _html = _html.replace('Ross Pullback Scanner', title, 2)  # <title> + <h1>
+    if js_defaults:
+        for var, val in js_defaults.items():
+            _html = _re.sub(rf'(let {var}\s*=\s*)[\d.]+;', rf'\g<1>{val};', _html)
+
     app = Flask(__name__)
 
     @app.route('/')
     def index():
-        resp = Response(_HTML, mimetype='text/html')
+        resp = Response(_html, mimetype='text/html')
         resp.headers['Cache-Control'] = 'no-store'
         return resp
 
