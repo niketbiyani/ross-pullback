@@ -18,14 +18,15 @@ from config import Config
 
 logger = logging.getLogger(__name__)
 
-_LIVE_POLL_INTERVAL = 5    # seconds between live poll cycles
+_LIVE_POLL_INTERVAL  = 15   # seconds between active-mover poll cycles
+_SLOW_SCAN_BATCH     = 50   # non-active symbols polled per cycle (rolling window)
 
 # Global API rate limiter — shared across all bootstrap workers.
 # Caps the total request rate to _MIN_API_GAP seconds between any two API calls,
-# so 16 workers don't flood Dhan's 20 req/s limit.
+# so 32 workers don't flood Dhan's rate limits.
 _API_LOCK    = threading.Lock()
 _API_LAST: float = 0.0
-_MIN_API_GAP = 0.05   # 20 req·s⁻¹ — matches Dhan's published rate limit
+_MIN_API_GAP = 0.10   # 10 req·s⁻¹ — safe headroom below Dhan's limit
 
 
 def _api_throttle():
@@ -308,35 +309,49 @@ class LiveFeed:
             if new_bars:
                 self._last_ts[(name, tf)] = new_bars[-1]['ts']
 
-    def _poll_all(self):
-        # Active movers go first so they're processed within the first few seconds
-        priority = self._priority_fn() if self._priority_fn else set()
-        ordered  = (
-            [s for s in self._symbols if s['symbol'] in priority] +
-            [s for s in self._symbols if s['symbol'] not in priority]
-        )
-        logger.info("Live poll cycle running (%d symbols, %d priority)...",
-                    len(ordered), len(priority))
+    def _run_batch(self, batch: list[dict], label: str):
+        if not batch:
+            return
         with ThreadPoolExecutor(max_workers=Config.MAX_WORKERS) as ex:
-            futs = {ex.submit(self._process_symbol, sec): sec
-                    for sec in ordered if self._running}
+            futs = [ex.submit(self._process_symbol, s) for s in batch if self._running]
             for f in as_completed(futs):
                 try:
                     f.result()
                 except Exception as e:
-                    logger.debug("Live poll worker error: %s", e)
+                    logger.debug("Poll error [%s]: %s", label, e)
 
     def start(self):
-        self._running = True
+        self._running    = True
+        self._slow_idx   = 0   # rolling index into non-active symbols
 
         def _run():
-            logger.info("Live feed started (intraday_minute_data polling every %ds, %d symbols).",
-                        _LIVE_POLL_INTERVAL, len(self._symbols))
+            logger.info("Live feed started (%d symbols, fast=%ds batch=%d).",
+                        len(self._symbols), _LIVE_POLL_INTERVAL, _SLOW_SCAN_BATCH)
             while self._running:
                 t0 = time.time()
-                self._poll_all()
+
+                priority   = self._priority_fn() if self._priority_fn else set()
+                active     = [s for s in self._symbols if s['symbol'] in     priority]
+                non_active = [s for s in self._symbols if s['symbol'] not in priority]
+
+                # Always: fetch all active movers
+                self._run_batch(active, "active")
+
+                # Rolling window: 50 non-active symbols per cycle to detect new movers
+                if non_active:
+                    n   = len(non_active)
+                    idx = self._slow_idx % n
+                    end = idx + _SLOW_SCAN_BATCH
+                    if end <= n:
+                        slow_batch = non_active[idx:end]
+                    else:
+                        slow_batch = non_active[idx:] + non_active[:end - n]
+                    self._slow_idx = (idx + _SLOW_SCAN_BATCH) % n
+                    self._run_batch(slow_batch, "slow")
+
                 elapsed = time.time() - t0
-                logger.info("Live poll cycle done in %.1fs.", elapsed)
+                logger.info("Live poll done in %.1fs (active=%d slow_batch=%d).",
+                            elapsed, len(active), min(_SLOW_SCAN_BATCH, len(non_active)))
                 wait = max(0.0, _LIVE_POLL_INTERVAL - elapsed)
                 if self._running and wait > 0:
                     time.sleep(wait)
