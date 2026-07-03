@@ -24,7 +24,7 @@ class Config:
     DHAN_TOTP_SECRET: str  = os.getenv("DHAN_TOTP_SECRET", "")
 
     # Scanner
-    HISTORY_DAYS: int          = int(os.getenv("HISTORY_DAYS", "3"))
+    HISTORY_DAYS: int          = int(os.getenv("HISTORY_DAYS", "15"))
     TIMEFRAMES: tuple          = (1, 3, 5, 15)
     MAX_WORKERS: int           = int(os.getenv("MAX_WORKERS", "32"))
 

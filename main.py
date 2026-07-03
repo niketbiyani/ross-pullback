@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 from collections import deque
+from dataclasses import asdict
 from datetime import date, datetime, timedelta
 
 from dhanhq import DhanContext
@@ -609,6 +610,106 @@ def main():
     # ── Phase 2: full bootstrap in background ────────────────────────────────
     _bootstrap_done = threading.Event()
 
+    def _backfill_history():
+        """Detect movers and run MACD strategy for each of the past 7 trading days.
+        Alerts are written to per-day JSONL files and loaded into the Alerts tab history.
+        Runs as a daemon thread after Phase 2 completes so it never blocks live trading."""
+        all_days = _trading_days(Config.HISTORY_DAYS)   # list of ISO date strings
+        today_str = _active_date.isoformat()
+        past_days = sorted(d for d in all_days if d < today_str)[-7:]
+
+        if not past_days:
+            logger.info('Backfill: no past days available in cache')
+            return
+
+        logger.info('Backfill: scanning %d past days (%s → %s)',
+                    len(past_days), past_days[0], past_days[-1])
+
+        for target_day in past_days:
+            target_date_obj = date.fromisoformat(target_day)
+            cutoff_date     = target_date_obj - timedelta(days=4)
+            strategy_cutoff = int(datetime(
+                cutoff_date.year, cutoff_date.month, cutoff_date.day,
+            ).timestamp())
+
+            # ── step 1: find movers on this day ────────────────────────────
+            day_movers: list[str] = []
+            for sec in symbols:
+                name  = sec['symbol']
+                cache = _load_cache(name)
+                day_bars = sorted(cache.get(target_day, []), key=lambda x: x['ts'])
+                if not day_bars:
+                    continue
+                bh        = deque(maxlen=5)
+                vol_total = 0.0
+                best_pct  = 0.0
+                for b in day_bars:
+                    vol_total += b.get('volume', 0.0)
+                    bh.append({
+                        'open': b.get('open', 0.0),
+                        'high': b.get('high', 0.0),
+                        'low':  b.get('low', 0.0),
+                        'ts':   b.get('ts', 0),
+                    })
+                    hist = list(bh)
+                    for n in range(1, len(hist) + 1):
+                        win = hist[-n:]
+                        ref = win[0]['open']
+                        if ref > 0:
+                            move = (max(w['high'] for w in win) - min(w['low'] for w in win)) / ref * 100
+                            if move > best_pct:
+                                best_pct = move
+                if best_pct >= Config.MOVER_MIN_PCT and vol_total >= Config.MOVER_MIN_VOLUME:
+                    day_movers.append(name)
+
+            logger.info('Backfill %s: %d movers found', target_day, len(day_movers))
+
+            # ── step 2: run MACD strategy for each mover ───────────────────
+            for name in day_movers:
+                cache   = _load_cache(name)
+                # Load all cached days up to and including target_day for indicator warmup
+                bars_1m = sorted(
+                    [b for day in all_days if day <= target_day
+                     for b in cache.get(day, [])],
+                    key=lambda x: x['ts'],
+                )
+                if not bars_1m:
+                    continue
+
+                for tf in Config.TIMEFRAMES:
+                    tf_bars = bars_1m if tf == 1 else _resample(bars_1m, tf)
+                    ind     = IndicatorSet()
+                    collected: list[Alert] = []
+
+                    def _bf_cb(a: Alert, _tgt=target_date_obj, _lst=collected):
+                        if date.fromtimestamp(a.ts) == _tgt:
+                            _lst.append(a)
+
+                    engine = StrategyEngine(name, tf, _bf_cb)
+
+                    for b in tf_bars:
+                        b_dict = b if isinstance(b, dict) else b.__dict__
+                        b_ts   = b_dict.get('ts', 0)
+                        vals   = ind.update(b)
+                        if vals is None or b_ts < strategy_cutoff:
+                            continue
+                        rec = BarRecord(
+                            ts=b_ts,
+                            open=b_dict.get('open', 0.0),  high=b_dict.get('high', 0.0),
+                            low=b_dict.get('low', 0.0),    close=b_dict.get('close', 0.0),
+                            volume=b_dict.get('volume', 0.0),
+                            macd=vals['macd'], signal=vals['signal'],
+                            ema50=vals['ema50'], rsi=vals['rsi'],
+                        )
+                        engine.update(rec)
+
+                    for alert in collected:
+                        alert_mgr.add_historical(alert, target_day)
+
+            logger.info('Backfill %s complete', target_day)
+
+        logger.info('Backfill complete for all past days')
+
     def _run_bootstrap():
         nonlocal is_live
         active_secs = [s for s in symbols if s['symbol'] in active_symbols]
@@ -645,6 +746,7 @@ def main():
         is_live = True
         logger.info('Phase 2 complete — MACD alerts enabled, starting live feed')
         _bootstrap_done.set()
+        threading.Thread(target=_backfill_history, daemon=True, name='BackfillHistory').start()
 
     threading.Thread(target=_run_bootstrap, daemon=True, name='Phase2Bootstrap').start()
     logger.info('Phase 2 bootstrap running in background — Movers tab live now')

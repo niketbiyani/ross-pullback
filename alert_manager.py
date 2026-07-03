@@ -1,13 +1,14 @@
 """
 Deduplicates alerts and distributes them to SSE subscribers.
 Persists today's alerts to a JSONL file so history survives restarts.
+Retains the last 7 trading days of alert files and loads them all on startup.
 """
 import json
 import os
 import threading
 from collections import deque
 from dataclasses import asdict
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 
 from strategy_engine import Alert
 
@@ -28,55 +29,71 @@ def _ts_to_date(ts: int) -> str:
     return ist.strftime("%d-%b")
 
 
+def _keep_dates(n: int = 7) -> set[str]:
+    """Return ISO date strings for the last n trading days (weekdays only)."""
+    result: set[str] = set()
+    d = date.today()
+    while len(result) < n:
+        if d.weekday() < 5:
+            result.add(d.isoformat())
+        d -= timedelta(days=1)
+    return result
+
+
 class AlertManager:
     def __init__(self, max_history: int = 5000, persist_dir: str | None = None):
         self._lock     = threading.Lock()
         self._history: deque[dict] = deque(maxlen=max_history)
         self._seen:    set[str]    = set()
         self._queues:  list[deque] = []
+        self._persist_dir:  str | None = persist_dir
         self._persist_file: str | None = None
 
         if persist_dir:
             date_str = _ist_date()
             self._persist_file = os.path.join(persist_dir, f"alerts_{date_str}.jsonl")
-            self._load_today()
+            self._load_recent()
             self._cleanup_old(persist_dir)
 
-    def _load_today(self):
-        if not self._persist_file or not os.path.exists(self._persist_file):
+    def _load_recent(self):
+        """Load the last 7 trading days of alerts from disk."""
+        if not self._persist_dir:
             return
+        keep = _keep_dates(7)
         loaded = 0
-        try:
-            with open(self._persist_file) as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        d = json.loads(line)
-                        key = d.get('_key', '')
-                        if key and key in self._seen:
+        for day_str in sorted(keep):          # chronological so newest is last → reversed() gives newest first
+            day_file = os.path.join(self._persist_dir, f"alerts_{day_str}.jsonl")
+            if not os.path.exists(day_file):
+                continue
+            try:
+                with open(day_file) as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
                             continue
-                        if key:
-                            self._seen.add(key)
-                        self._history.append(d)
-                        loaded += 1
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+                        try:
+                            d = json.loads(line)
+                            key = d.get('_key', '')
+                            if key and key in self._seen:
+                                continue
+                            if key:
+                                self._seen.add(key)
+                            self._history.append(d)
+                            loaded += 1
+                        except Exception:
+                            pass
+            except Exception:
+                pass
         if loaded:
             import logging
             logging.getLogger(__name__).info(
-                'Restored %d alerts from disk (%s)', loaded, self._persist_file)
+                'Restored %d alerts from disk (%d days)', loaded, len(keep))
 
     def _cleanup_old(self, persist_dir: str):
-        if not self._persist_file:
-            return
-        current = os.path.basename(self._persist_file)
+        keep_files = {f"alerts_{d}.jsonl" for d in _keep_dates(7)}
         try:
             for fn in os.listdir(persist_dir):
-                if fn.startswith('alerts_') and fn.endswith('.jsonl') and fn != current:
+                if fn.startswith('alerts_') and fn.endswith('.jsonl') and fn not in keep_files:
                     try:
                         os.remove(os.path.join(persist_dir, fn))
                     except OSError:
@@ -122,6 +139,29 @@ class AlertManager:
             for q in self._queues:
                 q.append(d)
         self._append_to_disk(d)
+
+    def add_historical(self, alert: Alert, day_str: str):
+        """Add a backfilled alert for a past trading day. Does not push to live SSE queues."""
+        key = (f"{alert.symbol}:{alert.tf}:{alert.direction}"
+               f":W{alert.wave_num}:{alert.entry_price:.2f}")
+        with self._lock:
+            if key in self._seen:
+                return
+            self._seen.add(key)
+            d = asdict(alert)
+            d['time_ist']   = _ts_to_ist(alert.ts)
+            d['date_ist']   = _ts_to_date(alert.ts)
+            d['sl_pct_str'] = f"{alert.sl_pct * 100:.2f}%"
+            d['_key']       = key
+            self._history.append(d)
+            # Historical alerts are not pushed to live SSE queues
+        if self._persist_dir:
+            day_file = os.path.join(self._persist_dir, f"alerts_{day_str}.jsonl")
+            try:
+                with open(day_file, 'a') as f:
+                    f.write(json.dumps(d) + '\n')
+            except Exception:
+                pass
 
     def get_all(self) -> list[dict]:
         with self._lock:
