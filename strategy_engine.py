@@ -190,6 +190,7 @@ class StrategyEngine:
         ep        = self._ep_bars()
         direction = self._ep_dir
         fired     = []
+        _alert_fired_this_bar = False  # one real alert per bar; extras stay in pending
 
         for pc in self._pending:
             if cur_rel <= pc['rel']:
@@ -217,6 +218,14 @@ class StrategyEngine:
                 logger.debug("[%s %dm] FIRE skipped (sl_pct %.3f out of range)", self.symbol, self.tf, sl_pct)
                 self._prev_entry_price = entry_price
                 fired.append(pc)
+                continue
+
+            # Multiple pending crosses can trigger on the same bar when earlier
+            # crosses didn't fire before price moved through all their swings.
+            # Only fire the first (earliest cross) per bar; keep the rest in
+            # pending so they can fire on a genuine later bar.
+            if _alert_fired_this_bar:
+                logger.debug("[%s %dm] FIRE deferred: cross_rel=%d already fired this bar", self.symbol, self.tf, pc['rel'])
                 continue
 
             # ── V1 flags ─────────────────────────────────────────────────────
@@ -272,6 +281,7 @@ class StrategyEngine:
 
             self._prev_entry_price    = entry_price
             self._prev_wave_entry_rel = cur_rel
+            _alert_fired_this_bar     = True
             fired.append(pc)
 
             alert = Alert(
