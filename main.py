@@ -250,12 +250,12 @@ def main():
                 else:
                     moves = [{'ts': 0, 'pct': 0.0, 'window': 0}]
 
-            for mv in moves:
-                row = dict(base)
-                row['peak_mom_pct']  = mv['pct']
-                row['peak_mom_win']  = mv.get('window', 0)
-                row['peak_mom_time'] = _ist_time(mv['ts']) if mv.get('ts') else ''
-                rows.append(row)
+            best_mv = max(moves, key=lambda x: x.get('pct', 0))
+            row = dict(base)
+            row['peak_mom_pct']  = best_mv['pct']
+            row['peak_mom_win']  = best_mv.get('window', 0)
+            row['peak_mom_time'] = _ist_time(best_mv['ts']) if best_mv.get('ts') else ''
+            rows.append(row)
 
         rows.sort(key=lambda x: x['overnight_chg'], reverse=True)
         return rows
