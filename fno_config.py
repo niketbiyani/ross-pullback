@@ -19,7 +19,7 @@ class FnoConfig:
 
     # Data window (~1 calendar month of trading days)
     HISTORY_DAYS:      int   = 22
-    TIMEFRAMES:        tuple = (1, 15, 30, 60)   # 1-min for resampling + momentum; 15/30/60 for MACD
+    TIMEFRAMES:        tuple = (1, 5, 15, 30, 60)  # 1/5/15-min for MOM; 15/30/60 for MACD
     MAX_WORKERS:       int   = int(os.getenv("FNO_WORKERS", "16"))
     LIVE_CATCHUP_BARS: int   = 500
 
