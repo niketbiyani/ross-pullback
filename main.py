@@ -804,7 +804,8 @@ def main():
     _rescan_ref['fn'] = rescan_today
 
     # ── live feed ─────────────────────────────────────────────────────────────
-    feed = LiveFeed(ctx, symbols, on_bar, on_volume_update)
+    feed = LiveFeed(ctx, symbols, on_bar, on_volume_update,
+                    priority_fn=lambda: active_symbols)
     feed._last_ts.update(bootstrap_last_ts)
     logger.info('Live feed seeded with %d bootstrap timestamps', len(bootstrap_last_ts))
     feed.start()

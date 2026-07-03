@@ -18,14 +18,14 @@ from config import Config
 
 logger = logging.getLogger(__name__)
 
-_LIVE_POLL_INTERVAL = 15   # seconds between live poll cycles
+_LIVE_POLL_INTERVAL = 5    # seconds between live poll cycles
 
 # Global API rate limiter — shared across all bootstrap workers.
 # Caps the total request rate to _MIN_API_GAP seconds between any two API calls,
 # so 16 workers don't flood Dhan's 20 req/s limit.
 _API_LOCK    = threading.Lock()
 _API_LAST: float = 0.0
-_MIN_API_GAP = 0.25   # 4 req·s⁻¹ — conservative to avoid Dhan rate limits
+_MIN_API_GAP = 0.05   # 20 req·s⁻¹ — matches Dhan's published rate limit
 
 
 def _api_throttle():
@@ -217,11 +217,13 @@ class LiveFeed:
     def __init__(self, dhan_context: DhanContext,
                  symbols: list[dict],
                  on_bar: Callable[[str, int, dict], None],
-                 on_volume: Callable[[str, list[dict]], None] | None = None):
-        self._client    = dhanhq(dhan_context)
-        self._symbols   = symbols
-        self._on_bar    = on_bar
-        self._on_volume = on_volume
+                 on_volume: Callable[[str, list[dict]], None] | None = None,
+                 priority_fn: Callable[[], set[str]] | None = None):
+        self._client      = dhanhq(dhan_context)
+        self._symbols     = symbols
+        self._on_bar      = on_bar
+        self._on_volume   = on_volume
+        self._priority_fn = priority_fn   # returns set of high-priority symbols (active movers)
         self._last_ts: dict[tuple, int] = {}   # (symbol, tf) -> last processed ts
         self._running = False
         self._thread: threading.Thread | None = None
@@ -307,10 +309,17 @@ class LiveFeed:
                 self._last_ts[(name, tf)] = new_bars[-1]['ts']
 
     def _poll_all(self):
-        logger.info("Live poll cycle running (%d symbols)...", len(self._symbols))
+        # Active movers go first so they're processed within the first few seconds
+        priority = self._priority_fn() if self._priority_fn else set()
+        ordered  = (
+            [s for s in self._symbols if s['symbol'] in priority] +
+            [s for s in self._symbols if s['symbol'] not in priority]
+        )
+        logger.info("Live poll cycle running (%d symbols, %d priority)...",
+                    len(ordered), len(priority))
         with ThreadPoolExecutor(max_workers=Config.MAX_WORKERS) as ex:
             futs = {ex.submit(self._process_symbol, sec): sec
-                    for sec in self._symbols if self._running}
+                    for sec in ordered if self._running}
             for f in as_completed(futs):
                 try:
                     f.result()
