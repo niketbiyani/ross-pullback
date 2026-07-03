@@ -67,6 +67,30 @@ def _save_cache(symbol: str, cache: dict[str, list[dict]]):
         json.dump(cache, f)
 
 
+# ── native 15-min bar cache (for accurate MACD — avoids resampling drift) ────
+
+def _native_cache_dir() -> str:
+    return Config.BARS_CACHE_DIR.rstrip('/') + '_15m'
+
+def _native_cache_path(symbol: str) -> str:
+    return os.path.join(_native_cache_dir(), f"{symbol}.json")
+
+def _load_native_cache(symbol: str) -> dict[str, list[dict]]:
+    path = _native_cache_path(symbol)
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def _save_native_cache(symbol: str, cache: dict[str, list[dict]]):
+    os.makedirs(_native_cache_dir(), exist_ok=True)
+    with open(_native_cache_path(symbol), 'w') as f:
+        json.dump(cache, f)
+
+
 # ── historical bootstrap ──────────────────────────────────────────────────────
 
 def _trading_days(n: int) -> list[str]:
@@ -131,6 +155,78 @@ def _fetch_day(client: dhanhq, sec: dict, day: str) -> list[dict]:
         return []
 
 
+def _fetch_day_native(client: dhanhq, sec: dict, day: str) -> list[dict]:
+    """Fetch one day of native 15-min bars (no resampling)."""
+    _api_throttle()
+    try:
+        resp = client.intraday_minute_data(
+            security_id=sec["security_id"],
+            exchange_segment="NSE_EQ",
+            instrument_type="EQUITY",
+            from_date=day,
+            to_date=day,
+            interval=15,
+        )
+        if not isinstance(resp, dict) or not isinstance(resp.get("data"), dict):
+            return []
+        data = resp["data"]
+        tss  = data.get("timestamp", [])
+        ops  = data.get("open",   [])
+        his  = data.get("high",   [])
+        los  = data.get("low",    [])
+        cls  = data.get("close",  [])
+        vls  = data.get("volume", [])
+        return [
+            {
+                'ts':     int(tss[i]),
+                'open':   float(ops[i]),
+                'high':   float(his[i]),
+                'low':    float(los[i]),
+                'close':  float(cls[i]),
+                'volume': float(vls[i]) if i < len(vls) else 0.0,
+            }
+            for i in range(len(tss))
+        ]
+    except Exception as e:
+        logger.debug("[%s] fetch_15m %s: %s", sec["symbol"], day, e)
+        return []
+
+
+def _fetch_history_native(client: dhanhq, sec: dict, n_days: int) -> tuple[list[dict], int]:
+    """Return (bars_15m, api_calls) using native 15-min bars with disk cache."""
+    name      = sec["symbol"]
+    needed    = _trading_days(n_days)
+    cache     = _load_native_cache(name)
+    api_calls = 0
+    changed   = False
+
+    today = date.today().isoformat()
+    for day in needed:
+        if day in cache:
+            if day == today and not cache[day]:
+                pass
+            else:
+                continue
+        bars = _fetch_day_native(client, sec, day)
+        cache[day] = bars
+        api_calls += 1
+        changed = True
+
+    for day in list(cache.keys()):
+        if day not in needed:
+            del cache[day]
+            changed = True
+
+    if changed:
+        _save_native_cache(name, cache)
+
+    bars: list[dict] = []
+    for day in needed:
+        bars.extend(cache.get(day, []))
+    bars.sort(key=lambda x: x['ts'])
+    return bars, api_calls
+
+
 def _fetch_history(client: dhanhq, sec: dict, n_days: int) -> tuple[list[dict], int]:
     """
     Return (bars_1m, api_calls) for the last n_days trading days.
@@ -173,13 +269,15 @@ def _fetch_history(client: dhanhq, sec: dict, n_days: int) -> tuple[list[dict], 
 
 def bootstrap(dhan_context: DhanContext,
               symbols: list[dict],
-              on_bar: Callable[[str, int, dict], None]):
+              on_bar: Callable[[str, int, dict], None],
+              skip_tfs: frozenset = frozenset()):
     """
-    Load/fetch 20 days of 1-min data for every symbol (from cache when possible),
-    derive 3/5/15-min bars, and call on_bar(symbol, tf, bar_dict) for each bar.
+    Load/fetch history of 1-min data for every symbol (from cache when possible),
+    derive higher-TF bars, and call on_bar(symbol, tf, bar_dict) for each bar.
+    TFs listed in skip_tfs are not emitted — use bootstrap_macd for those.
     """
-    logger.info("Bootstrapping %d symbols × %d days (cache: %s)...",
-                len(symbols), Config.HISTORY_DAYS, Config.BARS_CACHE_DIR)
+    logger.info("Bootstrapping %d symbols × %d days (1-min, skip_tfs=%s)...",
+                len(symbols), Config.HISTORY_DAYS, sorted(skip_tfs) or 'none')
     client     = dhanhq(dhan_context)
     total_api  = 0
 
@@ -187,6 +285,8 @@ def bootstrap(dhan_context: DhanContext,
         bars_1m, api_calls = _fetch_history(client, sec, Config.HISTORY_DAYS)
         name = sec["symbol"]
         for tf in Config.TIMEFRAMES:
+            if tf in skip_tfs:
+                continue
             bars = bars_1m if tf == 1 else _resample(bars_1m, tf)
             for b in bars:
                 on_bar(name, tf, b)
@@ -204,6 +304,42 @@ def bootstrap(dhan_context: DhanContext,
                             done, len(symbols), total_api)
 
     logger.info("Bootstrap complete. Total API calls: %d (0 = fully cached).", total_api)
+
+
+def bootstrap_macd(dhan_context: DhanContext,
+                   symbols: list[dict],
+                   on_bar: Callable[[str, int, dict], None],
+                   macd_tfs: tuple = (15, 30, 60)):
+    """
+    Bootstrap MACD timeframes using native 15-min bars from Dhan API.
+    Resamples native 15-min to 30/60-min (accurate — no 1-min drift).
+    """
+    logger.info("MACD bootstrap: %d symbols, native 15-min bars → %s-min engines",
+                len(symbols), '/'.join(str(t) for t in macd_tfs))
+    client    = dhanhq(dhan_context)
+    total_api = 0
+
+    def _one(sec: dict):
+        bars_15m, api_calls = _fetch_history_native(client, sec, Config.HISTORY_DAYS)
+        name = sec["symbol"]
+        for tf in macd_tfs:
+            bars = bars_15m if tf == 15 else _resample(bars_15m, tf)
+            for b in bars:
+                on_bar(name, tf, b)
+        return name, len(bars_15m), api_calls
+
+    with ThreadPoolExecutor(max_workers=Config.MAX_WORKERS) as ex:
+        futs = {ex.submit(_one, s): s for s in symbols}
+        done = 0
+        for fut in as_completed(futs):
+            name, n, calls = fut.result()
+            total_api += calls
+            done += 1
+            if done % 25 == 0 or done == len(symbols):
+                logger.info("  MACD bootstrap: %d / %d symbols  (API calls: %d)",
+                            done, len(symbols), total_api)
+
+    logger.info("MACD bootstrap complete. Total API calls: %d.", total_api)
 
 
 # ── live intraday polling feed ────────────────────────────────────────────────

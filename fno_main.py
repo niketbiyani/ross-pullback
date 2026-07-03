@@ -29,7 +29,7 @@ from fno_config import FnoConfig
 import dhan_feed as _df
 _df.Config = FnoConfig
 
-from dhan_feed import bootstrap, LiveFeed, _load_cache, _trading_days, _resample
+from dhan_feed import bootstrap, bootstrap_macd, LiveFeed, _load_cache, _load_native_cache, _trading_days, _resample
 from strategy_engine import StrategyEngine, BarRecord, Alert
 from indicators import IndicatorSet
 from alert_manager import AlertManager
@@ -681,9 +681,18 @@ def main():
                                 '_key':        f"{name}:MOM:{tf_mom}:{ts}",
                             }, b_day)
 
-                # MACD on 15/30/60-min for past days
+                # MACD on 15/30/60-min for past days — use native 15-min bars
+                cache_15m = _load_native_cache(name)
+                bars_15m  = sorted(
+                    [b for day in all_days for b in cache_15m.get(day, [])],
+                    key=lambda x: x['ts'],
+                )
+                if not bars_15m:
+                    logger.debug('Backfill %s: no native 15m cache, skipping MACD', name)
+                    continue
+
                 for tf in (15, 30, 60):
-                    tf_bars        = _resample(bars_1m, tf)
+                    tf_bars        = bars_15m if tf == 15 else _resample(bars_15m, tf)
                     ind            = IndicatorSet()
                     alerts_by_day: dict[str, list] = {}
 
@@ -719,12 +728,18 @@ def main():
 
     def _run_bootstrap():
         nonlocal is_live
-        logger.info('Bootstrap: %d symbols × %d days (1-min data → resample to 5/15/30/60-min)',
+        logger.info('Bootstrap A: %d symbols × %d days — 1-min bars for MOM',
                     len(symbols), FnoConfig.HISTORY_DAYS)
         try:
-            bootstrap(ctx, symbols, on_bar)
+            bootstrap(ctx, symbols, on_bar, skip_tfs=_MACD_TFS)
         except Exception as e:
-            logger.warning('Bootstrap incomplete (%s) — continuing with partial state', e)
+            logger.warning('Bootstrap A incomplete (%s) — continuing', e)
+
+        logger.info('Bootstrap B: native 15-min bars for MACD (fixes EMA/signal accuracy)')
+        try:
+            bootstrap_macd(ctx, symbols, on_bar, macd_tfs=tuple(sorted(_MACD_TFS)))
+        except Exception as e:
+            logger.warning('Bootstrap B incomplete (%s) — continuing', e)
 
         prev_closes.update(_bootstrap_prev_close)
         _bootstrap_prev_close.clear()
