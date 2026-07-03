@@ -388,7 +388,7 @@ def main():
                         if symbol not in moves_log:
                             moves_log[symbol] = []
                         moves_log[symbol].append({'ts': bar_ts, 'pct': round(best_pct, 2), 'window': best_win})
-                    alert_mgr.add_event(ev)
+                    # MOM signals drive the Movers tab only — not the Alerts tab
 
                 # Dynamic mover activation during live feed
                 if (is_live
@@ -715,7 +715,10 @@ def main():
         active_secs = [s for s in symbols if s['symbol'] in active_symbols]
         logger.info('Phase 2: bootstrapping %d movers (≥%.0f%% move + ≥%.0fK shares)',
                     len(active_secs), Config.MOVER_MIN_PCT, Config.MOVER_MIN_VOLUME / 1000)
-        bootstrap(ctx, active_secs, on_bar)
+        try:
+            bootstrap(ctx, active_secs, on_bar)
+        except Exception as e:
+            logger.warning('Phase 2 bootstrap incomplete (%s) — continuing with partial indicator state', e)
 
         for t in rvol_trackers.values():
             t.finalize()
