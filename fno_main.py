@@ -175,6 +175,8 @@ def main():
                 row['peak_mom_pct']  = mv['pct']
                 row['peak_mom_win']  = mv.get('window', 0)
                 row['peak_mom_time'] = _ist_time(mv['ts']) if mv.get('ts') else ''
+                row['peak_mom_tf']   = mv.get('tf', 1)
+                row['peak_mom_date'] = _ts_to_date_label(mv['ts']) if mv.get('ts') else ''
                 rows.append(row)
 
         rows.sort(key=lambda x: x['overnight_chg'], reverse=True)
@@ -306,12 +308,103 @@ def main():
 
     # ── dashboard ─────────────────────────────────────────────────────────────
     _rescan_ref: dict = {}
+
+    _FNO_MOVERS_JS = r"""
+// FNO Scanner — Movers tab: remove Vol/Overnight/CumRVOL, add TF + Date columns
+(function(){
+  // Replace toolbar (keep only MOM filter, Rescan, Date)
+  document.getElementById('rvol-toolbar').innerHTML = [
+    '<span class="lb-title">Movers — F&amp;O alerted stocks</span>',
+    '<span class="fl" style="margin-left:12px">MOM ≥</span>',
+    '<input id="mom-input" type="number" min="0" step="0.5" value="0" class="num-in">',
+    '<span class="fl">%</span>',
+    '<button id="rescan-btn" class="fb" style="margin-left:8px">↺ Rescan</button>',
+    '<span class="fl" style="margin-left:12px">Date:</span>',
+    '<input id="rvol-date" type="date" class="date-in">',
+    '<span id="lb-count"></span>',
+    '<span id="lb-updated"></span>',
+  ].join('');
+  document.getElementById('mom-input').value = lbMinMom;
+  document.getElementById('mom-input').addEventListener('input', function(e){
+    lbMinMom = parseFloat(e.target.value) || 0; renderLeaderboard();
+  });
+  document.getElementById('rescan-btn').addEventListener('click', function(){
+    var btn = document.getElementById('rescan-btn');
+    btn.textContent = '↺ scanning…'; btn.disabled = true;
+    fetch('./api/rescan',{method:'POST'}).then(function(r){return r.json();})
+      .then(function(d){
+        btn.textContent = d.new_symbols>0 ? '↺ +'+d.new_symbols+' found' : '↺ done';
+        setTimeout(function(){btn.textContent='↺ Rescan';btn.disabled=false;},3000);
+        fetchLeaderboard();
+      }).catch(function(){btn.textContent='↺ Rescan';btn.disabled=false;});
+  });
+  var rdInput = document.getElementById('rvol-date');
+  rdInput.value = _today;
+  rdInput.addEventListener('change', function(e){
+    rvolDateFilter = e.target.value || _today;
+    if (currentTab === 'rvol') applyRvolDate();
+  });
+
+  // Replace table header: # | Symbol | TF | Momentum | Date | Time | Day Rng %
+  document.querySelector('#lb-table thead tr').innerHTML = [
+    '<th style="width:22px">#</th>',
+    '<th class="sortable" data-tbl="lb" data-col="symbol">Symbol</th>',
+    '<th class="sortable" data-tbl="lb" data-col="peak_mom_tf">TF</th>',
+    '<th class="sortable sort-on" data-tbl="lb" data-col="peak_mom_pct">Momentum</th>',
+    '<th class="sortable" data-tbl="lb" data-col="peak_mom_date">Date</th>',
+    '<th class="sortable" data-tbl="lb" data-col="peak_mom_time">Time</th>',
+    '<th class="sortable" data-tbl="lb" data-col="day_range_pct">Day Rng %</th>',
+  ].join('');
+  lbSortCol = 'peak_mom_pct'; lbSortDir = -1;
+  document.querySelectorAll('#lb-table th.sortable').forEach(function(th){
+    th.addEventListener('click', function(){
+      lbSortDir = (lbSortCol===th.dataset.col) ? -lbSortDir : -1;
+      lbSortCol = th.dataset.col;
+      markSortHeader('lb', lbSortCol, lbSortDir);
+      renderLeaderboard();
+    });
+  });
+  markSortHeader('lb', lbSortCol, lbSortDir);
+
+  // Override renderLeaderboard — filter by MOM only, show TF + Date
+  window.renderLeaderboard = function(){
+    if (currentTab !== 'rvol') return;
+    var filtered = lbData.filter(function(r){ return (r.peak_mom_pct||0) >= lbMinMom; });
+    var rows = applySort(filtered, lbSortCol, lbSortDir);
+    document.getElementById('lb-count').textContent = rows.length + ' symbols';
+    var tbody = document.getElementById('lb-tbody');
+    if (!rows.length){
+      tbody.innerHTML = '<tr class="lb-empty"><td colspan="7">No alerts yet — populates as signals fire</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(function(r, i){
+      var tf = r.peak_mom_tf ? r.peak_mom_tf+'m' : '—';
+      var momStr = r.peak_mom_pct
+        ? '<span class="'+(r.peak_mom_pct>=3?'ratio-hi':r.peak_mom_pct>=1.5?'ratio-md':'ratio-lo')+'">'+r.peak_mom_pct.toFixed(2)+'%</span>'
+          +' <span style="color:#4b5563;font-size:10px">'+r.peak_mom_win+'b</span>'
+        : '<span style="color:#1f2937">—</span>';
+      return '<tr>'
+        +'<td style="color:#4b5563;font-size:10px">'+(i+1)+'</td>'
+        +'<td><b>'+r.symbol+'</b></td>'
+        +'<td style="color:#38bdf8;font-size:11px">'+tf+'</td>'
+        +'<td>'+momStr+'</td>'
+        +'<td style="color:#60a5fa;font-size:11px">'+(r.peak_mom_date||'—')+'</td>'
+        +'<td style="color:#60a5fa;font-size:11px">'+(r.peak_mom_time||'—')+'</td>'
+        +'<td style="color:#9ca3af">'+(r.day_range_pct>0?r.day_range_pct.toFixed(2)+'%':'—')+'</td>'
+        +'</tr>';
+    }).join('');
+    document.getElementById('lb-updated').textContent = 'updated '+new Date().toTimeString().slice(0,5);
+  };
+})();
+"""
+
     app = create_app(
         alert_mgr, compute_leaderboard,
         rescan_ref=_rescan_ref,
         get_peak_momentum=lambda: peak_momentum,
         js_defaults={'lbMinVol': 0, 'lbMinMom': 0},
         title='FNO Scanner',
+        extra_js=_FNO_MOVERS_JS,
     )
     logger.info('Dashboard → http://%s:%d', FnoConfig.DASHBOARD_HOST, FnoConfig.DASHBOARD_PORT)
 

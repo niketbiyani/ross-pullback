@@ -639,7 +639,8 @@ def create_app(alert_mgr: AlertManager,
                rescan_ref: dict | None = None,
                get_peak_momentum: Callable[[], dict] | None = None,
                js_defaults: dict | None = None,
-               title: str | None = None) -> Flask:
+               title: str | None = None,
+               extra_js: str | None = None) -> Flask:
     import re as _re
     _html = _HTML
     if title:
@@ -647,6 +648,8 @@ def create_app(alert_mgr: AlertManager,
     if js_defaults:
         for var, val in js_defaults.items():
             _html = _re.sub(rf'(let {var}\s*=\s*)[\d.]+;', rf'\g<1>{val};', _html)
+    if extra_js:
+        _html = _html.replace('</script>\n</body>', extra_js + '\n</script>\n</body>')
 
     app = Flask(__name__)
 
