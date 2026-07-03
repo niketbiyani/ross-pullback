@@ -615,7 +615,7 @@ def main():
         Alerts are written to per-day JSONL files and loaded into the Alerts tab history.
         Runs as a daemon thread after Phase 2 completes so it never blocks live trading."""
         all_days = _trading_days(Config.HISTORY_DAYS)   # list of ISO date strings
-        today_str = _active_date.isoformat()
+        today_str = date.today().isoformat()           # calendar today, not active trading date
         past_days = sorted(d for d in all_days if d < today_str)[-7:]
 
         if not past_days:
@@ -666,45 +666,49 @@ def main():
 
             # ── step 2: run MACD strategy for each mover ───────────────────
             for name in day_movers:
-                cache   = _load_cache(name)
-                # Load all cached days up to and including target_day for indicator warmup
-                bars_1m = sorted(
-                    [b for day in all_days if day <= target_day
-                     for b in cache.get(day, [])],
-                    key=lambda x: x['ts'],
-                )
-                if not bars_1m:
-                    continue
+                try:
+                    cache   = _load_cache(name)
+                    # Load all cached days up to and including target_day for indicator warmup
+                    bars_1m = sorted(
+                        [b for day in all_days if day <= target_day
+                         for b in cache.get(day, [])],
+                        key=lambda x: x['ts'],
+                    )
+                    if not bars_1m:
+                        continue
 
-                for tf in Config.TIMEFRAMES:
-                    tf_bars = bars_1m if tf == 1 else _resample(bars_1m, tf)
-                    ind     = IndicatorSet()
-                    collected: list[Alert] = []
+                    for tf in Config.TIMEFRAMES:
+                        tf_bars = bars_1m if tf == 1 else _resample(bars_1m, tf)
+                        ind     = IndicatorSet()
+                        collected: list[Alert] = []
 
-                    def _bf_cb(a: Alert, _tgt=target_date_obj, _lst=collected):
-                        if date.fromtimestamp(a.ts) == _tgt:
-                            _lst.append(a)
+                        def _bf_cb(a: Alert, _tgt=target_date_obj, _lst=collected):
+                            if date.fromtimestamp(a.ts) == _tgt:
+                                _lst.append(a)
 
-                    engine = StrategyEngine(name, tf, _bf_cb)
+                        engine = StrategyEngine(name, tf, _bf_cb)
 
-                    for b in tf_bars:
-                        b_dict = b if isinstance(b, dict) else b.__dict__
-                        b_ts   = b_dict.get('ts', 0)
-                        vals   = ind.update(b)
-                        if vals is None or b_ts < strategy_cutoff:
-                            continue
-                        rec = BarRecord(
-                            ts=b_ts,
-                            open=b_dict.get('open', 0.0),  high=b_dict.get('high', 0.0),
-                            low=b_dict.get('low', 0.0),    close=b_dict.get('close', 0.0),
-                            volume=b_dict.get('volume', 0.0),
-                            macd=vals['macd'], signal=vals['signal'],
-                            ema50=vals['ema50'], rsi=vals['rsi'],
-                        )
-                        engine.update(rec)
+                        for b in tf_bars:
+                            b_dict = b if isinstance(b, dict) else b.__dict__
+                            b_ts   = b_dict.get('ts', 0)
+                            vals   = ind.update(b)
+                            if vals is None or b_ts < strategy_cutoff:
+                                continue
+                            rec = BarRecord(
+                                ts=b_ts,
+                                open=b_dict.get('open', 0.0),  high=b_dict.get('high', 0.0),
+                                low=b_dict.get('low', 0.0),    close=b_dict.get('close', 0.0),
+                                volume=b_dict.get('volume', 0.0),
+                                macd=vals['macd'], signal=vals['signal'],
+                                ema50=vals['ema50'], rsi=vals['rsi'],
+                            )
+                            engine.update(rec)
 
-                    for alert in collected:
-                        alert_mgr.add_historical(alert, target_day)
+                        for alert in collected:
+                            alert_mgr.add_historical(alert, target_day)
+
+                except Exception as e:
+                    logger.warning('Backfill %s/%s: skipped — %s', target_day, name, e)
 
             logger.info('Backfill %s complete', target_day)
 
