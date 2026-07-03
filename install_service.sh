@@ -77,23 +77,76 @@ Persistent=true
 WantedBy=timers.target
 EOF
 
+# ── FNO Scanner Service ──────────────────────────────────────────────────
+
+cat > /etc/systemd/system/fno-scanner.service << EOF
+[Unit]
+Description=FNO Micro-Pullback Scanner (F&O universe, 15/30/60-min MACD)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${RUN_USER}
+WorkingDirectory=${WORK_DIR}
+ExecStart=${PYTHON} fno_main.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:${WORK_DIR}/fno_scanner.log
+StandardError=append:${WORK_DIR}/fno_scanner.log
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > /etc/systemd/system/fno-scanner-restart.service << 'EOF'
+[Unit]
+Description=Restart FNO Scanner for fresh bootstrap before market open
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl restart fno-scanner
+EOF
+
+cat > /etc/systemd/system/fno-scanner-restart.timer << 'EOF'
+[Unit]
+Description=Daily pre-market restart of FNO Scanner (8:50 AM IST)
+
+[Timer]
+OnCalendar=*-*-* 08:50:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
 # ── Reload and Enable ────────────────────────────────────────────────────
 
 systemctl daemon-reload
 systemctl enable ross-scanner
 systemctl enable ross-scanner-restart.timer
+systemctl enable fno-scanner
+systemctl enable fno-scanner-restart.timer
 
 echo ""
 echo "============================================"
 echo "  Installation Complete!"
 echo "============================================"
 echo ""
-echo "Commands:"
+echo "Ross Scanner (intraday):"
 echo "  sudo systemctl start ross-scanner      - Start"
 echo "  sudo systemctl stop ross-scanner       - Stop"
 echo "  sudo systemctl restart ross-scanner    - Restart"
 echo "  sudo systemctl status ross-scanner     - Check status"
 echo "  journalctl -u ross-scanner -f          - Live logs"
+echo "  Dashboard: http://localhost:5050"
 echo ""
-echo "Dashboard: http://localhost:5050"
+echo "FNO Scanner (F&O universe, 15/30/60-min):"
+echo "  sudo systemctl start fno-scanner       - Start"
+echo "  sudo systemctl stop fno-scanner        - Stop"
+echo "  sudo systemctl restart fno-scanner     - Restart"
+echo "  sudo systemctl status fno-scanner      - Check status"
+echo "  journalctl -u fno-scanner -f           - Live logs"
+echo "  Dashboard: http://localhost:5051"
 echo ""
