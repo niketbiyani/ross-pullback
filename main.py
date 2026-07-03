@@ -250,12 +250,12 @@ def main():
                 else:
                     moves = [{'ts': 0, 'pct': 0.0, 'window': 0}]
 
-            best_mv = max(moves, key=lambda x: x.get('pct', 0))
-            row = dict(base)
-            row['peak_mom_pct']  = best_mv['pct']
-            row['peak_mom_win']  = best_mv.get('window', 0)
-            row['peak_mom_time'] = _ist_time(best_mv['ts']) if best_mv.get('ts') else ''
-            rows.append(row)
+            for mv in moves:
+                row = dict(base)
+                row['peak_mom_pct']  = mv['pct']
+                row['peak_mom_win']  = mv.get('window', 0)
+                row['peak_mom_time'] = _ist_time(mv['ts']) if mv.get('ts') else ''
+                rows.append(row)
 
         rows.sort(key=lambda x: x['overnight_chg'], reverse=True)
         return rows
@@ -383,7 +383,8 @@ def main():
                                     _ist_time(now_ts), lag_s)
                         if symbol not in moves_log:
                             moves_log[symbol] = []
-                        moves_log[symbol].append({'ts': bar_ts, 'pct': round(best_pct, 2), 'window': best_win})
+                        if not any(m['ts'] == bar_ts for m in moves_log[symbol]):
+                            moves_log[symbol].append({'ts': bar_ts, 'pct': round(best_pct, 2), 'window': best_win})
                     # MOM signals drive the Movers tab only — not the Alerts tab
 
                 # Dynamic mover activation during live feed
@@ -533,7 +534,7 @@ def main():
             bars = sorted(_load_cache(name).get(today, []), key=lambda x: x['ts'])
             if not bars:
                 continue
-            moves_log[name] = []  # rebuild from scratch for this symbol
+            scan_events: list[dict] = []
             bh = deque(maxlen=5)
             vol_total = t_high = t_open = t_close = 0.0
             t_low = float('inf')
@@ -563,7 +564,15 @@ def main():
                     alerted_symbols.add(name)
                 if best_pct >= 3.0 and ts - local_last_fired.get(name, 0) >= 300:
                     local_last_fired[name] = ts
-                    moves_log[name].append({'ts': ts, 'pct': round(best_pct, 2), 'window': best_win})
+                    scan_events.append({'ts': ts, 'pct': round(best_pct, 2), 'window': best_win})
+            # Merge scan events into moves_log without duplicating ts already present
+            existing_ts = {m['ts'] for m in moves_log.get(name, [])}
+            if name not in moves_log:
+                moves_log[name] = []
+            for ev in scan_events:
+                if ev['ts'] not in existing_ts:
+                    moves_log[name].append(ev)
+                    existing_ts.add(ev['ts'])
             if vol_total > 0:   today_volumes[name]  = vol_total
             if t_high  > 0:     today_highs[name]    = t_high
             if t_low   < float('inf') and t_low > 0: today_lows[name] = t_low
