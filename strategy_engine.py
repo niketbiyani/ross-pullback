@@ -235,6 +235,7 @@ class StrategyEngine:
             #   W2+: RSI window is prev_entry → current cross (fresh push each wave)
             cross_rel  = pc['rel']
             wave_start = self._prev_wave_entry_rel if self._prev_wave_entry_rel is not None else 0
+            wave_start = min(wave_start, cross_rel)  # guard: prev entry may be after cross when crosses queue up
             if direction == 'DOWN':
                 ema_clear   = not any(b.high >= b.ema50 for b in ep[:cur_rel + 1])
                 rsi_extreme = min(b.rsi for b in ep[wave_start:cross_rel + 1]) <= 30
