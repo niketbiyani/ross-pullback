@@ -639,8 +639,18 @@ def main():
                     continue
 
                 # MOM on 1-min, 5-min, 15-min for past days
+                # 1-min: from 1-min cache; 5-min and 15-min: from native caches (no 1-min drift)
                 for tf_mom in (1, 5, 15):
-                    bars_tf     = bars_1m if tf_mom == 1 else _resample(bars_1m, tf_mom)
+                    if tf_mom == 1:
+                        bars_tf = bars_1m
+                    else:
+                        _cache_tf = _load_native_cache(name, tf_mom)
+                        bars_tf   = sorted(
+                            [b for day in all_days for b in _cache_tf.get(day, [])],
+                            key=lambda x: x['ts'],
+                        )
+                        if not bars_tf:
+                            continue
                     bh: deque   = deque(maxlen=5)
                     mom_last_bf = 0   # last fired ts for this symbol/TF combo
 
@@ -681,8 +691,10 @@ def main():
                                 '_key':        f"{name}:MOM:{tf_mom}:{ts}",
                             }, b_day)
 
-                # MACD on 15/30/60-min for past days — use native 15-min bars
-                cache_15m = _load_native_cache(name)
+                # MACD on 15/30/60-min for past days — all from native caches, no 1-min drift
+                # 15-min: native; 30-min: derived from native 15-min (2 bars, accurate);
+                # 60-min: native
+                cache_15m = _load_native_cache(name, 15)
                 bars_15m  = sorted(
                     [b for day in all_days for b in cache_15m.get(day, [])],
                     key=lambda x: x['ts'],
@@ -691,8 +703,22 @@ def main():
                     logger.debug('Backfill %s: no native 15m cache, skipping MACD', name)
                     continue
 
+                cache_60m = _load_native_cache(name, 60)
+                bars_60m  = sorted(
+                    [b for day in all_days for b in cache_60m.get(day, [])],
+                    key=lambda x: x['ts'],
+                )
+
                 for tf in (15, 30, 60):
-                    tf_bars        = bars_15m if tf == 15 else _resample(bars_15m, tf)
+                    if tf == 60:
+                        tf_bars = bars_60m
+                        if not tf_bars:
+                            logger.debug('Backfill %s: no native 60m cache, skipping MACD-60', name)
+                            continue
+                    elif tf == 30:
+                        tf_bars = _resample(bars_15m, 30)  # 2 native 15-min bars per candle
+                    else:
+                        tf_bars = bars_15m
                     ind            = IndicatorSet()
                     alerts_by_day: dict[str, list] = {}
 
@@ -728,16 +754,16 @@ def main():
 
     def _run_bootstrap():
         nonlocal is_live
-        logger.info('Bootstrap A: %d symbols × %d days — 1-min bars for MOM',
+        logger.info('Bootstrap A: %d symbols × %d days — 1-min bars for MOM-1m only',
                     len(symbols), FnoConfig.HISTORY_DAYS)
         try:
-            bootstrap(ctx, symbols, on_bar, skip_tfs=_MACD_TFS)
+            bootstrap(ctx, symbols, on_bar, skip_tfs=_MACD_TFS | {5})
         except Exception as e:
             logger.warning('Bootstrap A incomplete (%s) — continuing', e)
 
-        logger.info('Bootstrap B: native 15-min bars for MACD (fixes EMA/signal accuracy)')
+        logger.info('Bootstrap B: native bars for 5/15/60-min; 30-min from native 15-min')
         try:
-            bootstrap_macd(ctx, symbols, on_bar, macd_tfs=tuple(sorted(_MACD_TFS)))
+            bootstrap_macd(ctx, symbols, on_bar, macd_tfs=(5, 15, 30, 60))
         except Exception as e:
             logger.warning('Bootstrap B incomplete (%s) — continuing', e)
 
