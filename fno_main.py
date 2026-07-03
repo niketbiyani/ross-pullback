@@ -311,13 +311,14 @@ def main():
     _rescan_ref: dict = {}
 
     _FNO_MOVERS_JS = r"""
-// FNO Scanner — Movers tab: remove Vol/Overnight/CumRVOL, add TF filter + Date column
+// FNO Scanner — Movers tab: TF filter, All-dates view, custom columns
 (function(){
-  var lbTfFilter = 0;   // 0 = All
+  var lbTfFilter = 0;     // 0 = All TFs
+  var lbShowAll  = true;  // default: show all dates (not just today)
 
-  // Replace toolbar (MOM filter, TF filter, Rescan, Date)
+  // ── toolbar ────────────────────────────────────────────────────────────────
   document.getElementById('rvol-toolbar').innerHTML = [
-    '<span class="lb-title">Movers — F&amp;O alerted stocks</span>',
+    '<span class="lb-title">Movers — F&amp;O</span>',
     '<span class="fl" style="margin-left:12px">TF:</span>',
     '<button class="fb on" data-lbtf="0">All</button>',
     '<button class="fb" data-lbtf="1">1m</button>',
@@ -327,24 +328,30 @@ def main():
     '<input id="mom-input" type="number" min="0" step="0.5" value="0" class="num-in">',
     '<span class="fl">%</span>',
     '<button id="rescan-btn" class="fb" style="margin-left:8px">↺ Rescan</button>',
-    '<span class="fl" style="margin-left:12px">Date:</span>',
-    '<input id="rvol-date" type="date" class="date-in">',
+    '<span class="fl" style="margin-left:12px">Range:</span>',
+    '<button id="lb-all-btn" class="fb on">All dates</button>',
+    '<input id="rvol-date" type="date" class="date-in" style="margin-left:4px">',
     '<span id="lb-count"></span>',
     '<span id="lb-updated"></span>',
   ].join('');
 
+  // TF buttons
   document.querySelectorAll('[data-lbtf]').forEach(function(btn){
     btn.addEventListener('click', function(){
       document.querySelectorAll('[data-lbtf]').forEach(function(b){ b.classList.remove('on'); });
       btn.classList.add('on');
       lbTfFilter = parseInt(btn.dataset.lbtf, 10);
-      renderLeaderboard();
+      if (currentTab === 'rvol') applyRvolDate();
     });
   });
-  document.getElementById('mom-input').value = lbMinMom;
+
+  // MOM threshold
   document.getElementById('mom-input').addEventListener('input', function(e){
-    lbMinMom = parseFloat(e.target.value) || 0; renderLeaderboard();
+    lbMinMom = parseFloat(e.target.value) || 0;
+    if (currentTab === 'rvol') applyRvolDate();
   });
+
+  // Rescan button
   document.getElementById('rescan-btn').addEventListener('click', function(){
     var btn = document.getElementById('rescan-btn');
     btn.textContent = '↺ scanning…'; btn.disabled = true;
@@ -355,14 +362,30 @@ def main():
         fetchLeaderboard();
       }).catch(function(){btn.textContent='↺ Rescan';btn.disabled=false;});
   });
-  var rdInput = document.getElementById('rvol-date');
-  rdInput.value = _today;
-  rdInput.addEventListener('change', function(e){
-    rvolDateFilter = e.target.value || _today;
+
+  // "All dates" button
+  document.getElementById('lb-all-btn').addEventListener('click', function(){
+    lbShowAll = true;
+    document.getElementById('rvol-date').value = '';
+    document.getElementById('lb-all-btn').classList.add('on');
     if (currentTab === 'rvol') applyRvolDate();
   });
 
-  // Replace table header: # | Symbol | TF | Momentum | Date | Time | Day Rng %
+  // Date picker — selecting a date disables "All"
+  document.getElementById('rvol-date').addEventListener('change', function(e){
+    if (e.target.value) {
+      lbShowAll = false;
+      rvolDateFilter = e.target.value;
+      document.getElementById('lb-all-btn').classList.remove('on');
+    } else {
+      lbShowAll = true;
+      document.getElementById('lb-all-btn').classList.add('on');
+    }
+    if (currentTab === 'rvol') applyRvolDate();
+  });
+
+  // ── table headers ─────────────────────────────────────────────────────────
+  // Today leaderboard (lb-table): # | Symbol | TF | Momentum | Date | Time | Day Rng %
   document.querySelector('#lb-table thead tr').innerHTML = [
     '<th style="width:22px">#</th>',
     '<th class="sortable" data-tbl="lb" data-col="symbol">Symbol</th>',
@@ -383,7 +406,17 @@ def main():
   });
   markSortHeader('lb', lbSortCol, lbSortDir);
 
-  // Override renderLeaderboard — filter by TF and MOM, show TF + Date columns
+  // Historical / All-dates table (hist-table): # | Symbol | TF | Momentum | Date | Time
+  document.querySelector('#hist-table thead tr').innerHTML = [
+    '<th style="width:22px">#</th>',
+    '<th>Symbol</th>',
+    '<th>TF</th>',
+    '<th>Momentum</th>',
+    '<th>Date</th>',
+    '<th>Time</th>',
+  ].join('');
+
+  // ── renderLeaderboard (today's live data) ──────────────────────────────────
   window.renderLeaderboard = function(){
     if (currentTab !== 'rvol') return;
     var filtered = lbData.filter(function(r){
@@ -416,6 +449,58 @@ def main():
     }).join('');
     document.getElementById('lb-updated').textContent = 'updated '+new Date().toTimeString().slice(0,5);
   };
+
+  // ── applyRvolDate — decides which panel to show ────────────────────────────
+  window.applyRvolDate = function(){
+    var showToday = !lbShowAll && rvolDateFilter === _today;
+    document.getElementById('lb-table').style.display   = showToday ? '' : 'none';
+    document.getElementById('hist-panel').style.display = showToday ? 'none' : 'block';
+    if (showToday) {
+      fetchLeaderboard();
+    } else {
+      renderHistoricalMovers(lbShowAll ? null : rvolDateFilter);
+    }
+  };
+
+  // ── renderHistoricalMovers — all dates or specific date ───────────────────
+  window.renderHistoricalMovers = function(dateISO){
+    var momAlerts = alerts.filter(function(a){
+      if (a.alert_type !== 'MOM') return false;
+      if (dateISO && a.date_iso !== dateISO) return false;
+      if (lbTfFilter !== 0 && (a.tf||1) !== lbTfFilter) return false;
+      if ((a.pct||0) < lbMinMom) return false;
+      return true;
+    });
+    momAlerts.sort(function(a,b){ return (b.pct||0)-(a.pct||0); });
+    document.getElementById('lb-count').textContent = momAlerts.length + ' signals';
+    document.getElementById('lb-updated').textContent = 'updated '+new Date().toTimeString().slice(0,5);
+    var tbody = document.getElementById('hist-tbody');
+    if (!momAlerts.length){
+      tbody.innerHTML = '<tr><td colspan="6" style="color:#4b5563;text-align:center;padding:20px">'
+        +(dateISO ? 'No MOM signals for '+dateISO : 'No MOM signals in history yet')+'</td></tr>';
+      return;
+    }
+    tbody.innerHTML = momAlerts.map(function(r,i){
+      var tf = r.tf ? r.tf+'m' : '—';
+      var momStr = r.pct
+        ? '<span class="'+(r.pct>=3?'ratio-hi':r.pct>=1.5?'ratio-md':'ratio-lo')+'">'+r.pct.toFixed(2)+'%</span>'
+          +' <span style="color:#4b5563;font-size:10px">'+(r.window||1)+'b</span>'
+        : '—';
+      return '<tr>'
+        +'<td style="color:#4b5563;font-size:10px">'+(i+1)+'</td>'
+        +'<td><b>'+r.symbol+'</b></td>'
+        +'<td style="color:#38bdf8;font-size:11px">'+tf+'</td>'
+        +'<td>'+momStr+'</td>'
+        +'<td style="color:#60a5fa;font-size:11px">'+(r.date_ist||r.date_iso||'—')+'</td>'
+        +'<td style="color:#60a5fa;font-size:11px">'+(r.time_ist||'—')+'</td>'
+        +'</tr>';
+    }).join('');
+  };
+
+  // Trigger initial "All dates" render when tab becomes active
+  document.querySelector('[data-tab="rvol"]').addEventListener('click', function(){
+    setTimeout(function(){ if (lbShowAll) applyRvolDate(); }, 50);
+  }, true);
 })();
 """
 
