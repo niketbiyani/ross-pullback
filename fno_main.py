@@ -200,9 +200,6 @@ def main():
         if mom_key not in bar_history:
             bar_history[mom_key] = deque(maxlen=5)
         bh = bar_history[mom_key]
-        # Reset on day boundary — prevents overnight gaps inflating the window range
-        if bh and date.fromtimestamp(bh[-1]['ts']) != date.fromtimestamp(bar_ts):
-            bh.clear()
         bh.append({'open': open_p, 'high': high, 'low': low, 'ts': bar_ts})
 
         hist     = list(bar_history[mom_key])
@@ -565,9 +562,6 @@ def main():
                     for b in bars_tf:
                         ts    = b.get('ts', 0)
                         b_day = date.fromtimestamp(ts).isoformat()
-                        # Reset on day boundary to prevent gap-up/gap-down inflating range
-                        if bh and date.fromtimestamp(bh[-1]['ts']).isoformat() != b_day:
-                            bh.clear()
                         bh.append({
                             'open': b.get('open', 0.0),
                             'high': b.get('high', 0.0),
