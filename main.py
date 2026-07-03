@@ -26,7 +26,7 @@ from config import Config
 from indicators import IndicatorSet
 from strategy_engine import StrategyEngine, BarRecord, Alert
 from universe import build_universe
-from dhan_feed import bootstrap, LiveFeed, _load_cache
+from dhan_feed import bootstrap, LiveFeed, _load_cache, _trading_days, _resample
 from alert_manager import AlertManager
 from rvol import RvolTracker
 from dashboard import create_app
@@ -108,6 +108,8 @@ def main():
     moves_log: dict[str, list[dict]] = {} # symbol → [{ts, pct, window}] one entry per MOM event
 
     alerted_symbols: set[str] = set()     # symbols with any alert (MACD or MOM) today
+    active_symbols:  set[str] = set()     # symbols with MACD engines (≥2% move + ≥1M vol)
+    _bootstrapping:  set[str] = set()     # symbols being history-replayed right now
 
     rolling_bar_ranges: dict[str, deque] = {}
     consol_breaks:      dict[str, dict]  = {}
@@ -264,6 +266,9 @@ def main():
     # ── callbacks ─────────────────────────────────────────────────────────────
 
     def on_alert(alert: Alert):
+        # History replay builds indicator/episode state — only surface today's alerts
+        if date.fromtimestamp(alert.ts) != _active_date:
+            return
         today_vol = today_volumes.get(alert.symbol, 0.0)
         avg_vol   = avg_volumes.get(alert.symbol, 0.0)
         # Attach live context for alerts on the active trading date
@@ -380,6 +385,20 @@ def main():
                         moves_log[symbol].append({'ts': bar_ts, 'pct': round(best_pct, 2), 'window': best_win})
                     alert_mgr.add_event(ev)
 
+                # Dynamic mover activation during live feed
+                if (is_live
+                        and symbol not in active_symbols
+                        and best_pct >= Config.MOVER_MIN_PCT
+                        and today_volumes.get(symbol, 0.0) >= Config.MOVER_MIN_VOLUME):
+                    active_symbols.add(symbol)
+                    alerted_symbols.add(symbol)
+                    sec = _sym_lookup.get(symbol)
+                    if sec:
+                        threading.Thread(
+                            target=lambda s=sec: _bootstrap_new_mover(s),
+                            daemon=True, name=f'Mover-{symbol}',
+                        ).start()
+
                 # Range speed: % of avg daily range covered and how fast
                 h_t = today_highs.get(symbol, 0.0)
                 l_t = today_lows.get(symbol, 0.0)
@@ -427,6 +446,10 @@ def main():
             tracker = rvol_trackers.get(symbol)
             if tracker is not None and not is_live:
                 tracker.add_historical(bar_ts, vol, high, low, open_p)
+
+        # Only run MACD engine for movers; skip while history is being replayed
+        if symbol not in active_symbols or symbol in _bootstrapping:
+            return
 
         key = (symbol, tf)
         if key not in ind_sets:
@@ -494,6 +517,7 @@ def main():
     logger.info('Universe: %d symbols', len(symbols))
 
     avg_volumes.update({s['symbol']: s.get('avg_daily_volume', 0.0) for s in symbols})
+    _sym_lookup: dict[str, dict] = {s['symbol']: s for s in symbols}
 
     rvol_trackers.update({s['symbol']: RvolTracker(s['symbol']) for s in symbols})
 
@@ -547,17 +571,46 @@ def main():
             if prev_c > 0 and t_close > 0:
                 overnight_chg[name] = round((t_close - prev_c) / prev_c * 100, 2)
 
+            peak_pct = peak_momentum.get(name, {}).get('pct', 0.0)
+            if peak_pct >= Config.MOVER_MIN_PCT and vol_total >= Config.MOVER_MIN_VOLUME:
+                active_symbols.add(name)
+                alerted_symbols.add(name)
+
     # ── Phase 1: instant Movers from disk cache ───────────────────────────────
     _load_state()  # restore alerted_symbols + peak_momentum from previous run today
     _scan_today_bars()
     logger.info('Phase 1 complete — %d movers pre-populated, dashboard live', len(alerted_symbols))
+
+    def _bootstrap_new_mover(sec: dict):
+        """Replay all cached bars for a newly-detected mover to build indicator state.
+        Live bars for this symbol are blocked until replay is done."""
+        name = sec['symbol']
+        _bootstrapping.add(name)
+        try:
+            logger.info('New mover activated: %s — replaying cached history', name)
+            needed  = _trading_days(Config.HISTORY_DAYS)
+            cache   = _load_cache(name)
+            bars_1m = sorted(
+                [b for day in needed for b in cache.get(day, [])],
+                key=lambda x: x['ts'],
+            )
+            for tf in Config.TIMEFRAMES:
+                bars = bars_1m if tf == 1 else _resample(bars_1m, tf)
+                for b in bars:
+                    on_bar(name, tf, b)
+            logger.info('New mover %s: history done (%d 1m bars)', name, len(bars_1m))
+        finally:
+            _bootstrapping.discard(name)
 
     # ── Phase 2: full bootstrap in background ────────────────────────────────
     _bootstrap_done = threading.Event()
 
     def _run_bootstrap():
         nonlocal is_live
-        bootstrap(ctx, symbols, on_bar)
+        active_secs = [s for s in symbols if s['symbol'] in active_symbols]
+        logger.info('Phase 2: bootstrapping %d movers (≥%.0f%% move + ≥%.0fK shares)',
+                    len(active_secs), Config.MOVER_MIN_PCT, Config.MOVER_MIN_VOLUME / 1000)
+        bootstrap(ctx, active_secs, on_bar)
 
         for t in rvol_trackers.values():
             t.finalize()
@@ -603,12 +656,21 @@ def main():
 
     # ── rescan (on-demand, reuses _scan_today_bars) ───────────────────────────
     def rescan_today() -> int:
-        before = set(alerted_symbols)
+        before_active = set(active_symbols)
+        before        = set(alerted_symbols)
         _scan_today_bars()
+        new_movers = active_symbols - before_active
+        for name in new_movers:
+            sec = _sym_lookup.get(name)
+            if sec and name not in _bootstrapping:
+                threading.Thread(
+                    target=lambda s=sec: _bootstrap_new_mover(s),
+                    daemon=True, name=f'Mover-{name}',
+                ).start()
         n_new = len(alerted_symbols - before)
         _save_state()
-        logger.info('Rescan today: %d new symbols added to Movers (total alerted: %d)',
-                    n_new, len(alerted_symbols))
+        logger.info('Rescan: %d new movers activated, %d new leaderboard symbols (total alerted: %d)',
+                    len(new_movers), n_new, len(alerted_symbols))
         return n_new
 
     _rescan_ref['fn'] = rescan_today

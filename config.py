@@ -37,6 +37,10 @@ class Config:
     TURNOVER_THRESHOLD: float  = float(os.getenv("TURNOVER_THRESHOLD", "1000000"))   # ₹10L
     VOLUME_HISTORY_DAYS: int   = int(os.getenv("VOLUME_HISTORY_DAYS", "10"))
 
+    # Mover gate — only symbols crossing BOTH thresholds get a MACD engine
+    MOVER_MIN_PCT:    float = float(os.getenv("MOVER_MIN_PCT",    "2.0"))     # % intraday move
+    MOVER_MIN_VOLUME: float = float(os.getenv("MOVER_MIN_VOLUME", "1000000")) # cumulative shares
+
     # Strategy parameters
     EPISODE_MIN_BARS: int  = 8
     SL_MIN_PCT: float      = 0.0015   # 0.15%
