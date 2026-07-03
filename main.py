@@ -632,8 +632,9 @@ def main():
                 cutoff_date.year, cutoff_date.month, cutoff_date.day,
             ).timestamp())
 
-            # ── step 1: find movers on this day ────────────────────────────
+            # ── step 1: find movers and generate MOM events for this day ───
             day_movers: list[str] = []
+            mom_last_fired_bf: dict[str, int] = {}
             for sec in symbols:
                 name  = sec['symbol']
                 cache = _load_cache(name)
@@ -645,20 +646,38 @@ def main():
                 best_pct  = 0.0
                 for b in day_bars:
                     vol_total += b.get('volume', 0.0)
+                    ts  = b.get('ts', 0)
                     bh.append({
                         'open': b.get('open', 0.0),
                         'high': b.get('high', 0.0),
                         'low':  b.get('low', 0.0),
-                        'ts':   b.get('ts', 0),
+                        'ts':   ts,
                     })
                     hist = list(bh)
+                    bar_best = 0.0; bar_win = 1
                     for n in range(1, len(hist) + 1):
                         win = hist[-n:]
                         ref = win[0]['open']
                         if ref > 0:
                             move = (max(w['high'] for w in win) - min(w['low'] for w in win)) / ref * 100
-                            if move > best_pct:
-                                best_pct = move
+                            if move > bar_best:
+                                bar_best = move; bar_win = n
+                    if bar_best > best_pct:
+                        best_pct = bar_best
+                    if bar_best >= 3.0 and ts - mom_last_fired_bf.get(name, 0) >= 300:
+                        mom_last_fired_bf[name] = ts
+                        alert_mgr.add_historical_event({
+                            'alert_type':   'MOM',
+                            'symbol':       name,
+                            'tf':           1,
+                            'pct':          round(bar_best, 2),
+                            'window':       bar_win,
+                            'ts':           ts,
+                            'time_ist':     _ist_time(ts),
+                            'date_ist':     _ts_to_date(ts),
+                            'today_volume': 0.0,
+                            '_key':         f"{name}:MOM:{ts}",
+                        }, target_day)
                 if best_pct >= Config.MOVER_MIN_PCT and vol_total >= Config.MOVER_MIN_VOLUME:
                     day_movers.append(name)
 

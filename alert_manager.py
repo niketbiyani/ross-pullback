@@ -29,6 +29,11 @@ def _ts_to_date(ts: int) -> str:
     return ist.strftime("%d-%b")
 
 
+def _ts_to_date_iso(ts: int) -> str:
+    ist = datetime.fromtimestamp(ts, tz=timezone(timedelta(hours=5, minutes=30)))
+    return ist.strftime("%Y-%m-%d")
+
+
 def _keep_dates(n: int = 7) -> set[str]:
     """Return ISO date strings for the last n trading days (weekdays only)."""
     result: set[str] = set()
@@ -78,6 +83,8 @@ class AlertManager:
                                 continue
                             if key:
                                 self._seen.add(key)
+                            if 'date_iso' not in d and 'ts' in d:
+                                d['date_iso'] = _ts_to_date_iso(d['ts'])
                             self._history.append(d)
                             loaded += 1
                         except Exception:
@@ -120,6 +127,7 @@ class AlertManager:
             d = asdict(alert)
             d['time_ist']   = _ts_to_ist(alert.ts)
             d['date_ist']   = _ts_to_date(alert.ts)
+            d['date_iso']   = _ts_to_date_iso(alert.ts)
             d['sl_pct_str'] = f"{alert.sl_pct * 100:.2f}%"
             d['_key']       = key
             self._history.append(d)
@@ -129,6 +137,8 @@ class AlertManager:
 
     def add_event(self, d: dict):
         """Add a raw dict event (e.g. momentum signal) without an Alert object."""
+        if 'date_iso' not in d and 'ts' in d:
+            d['date_iso'] = _ts_to_date_iso(d['ts'])
         key = d.get('_key', '')
         with self._lock:
             if key and key in self._seen:
@@ -151,10 +161,31 @@ class AlertManager:
             d = asdict(alert)
             d['time_ist']   = _ts_to_ist(alert.ts)
             d['date_ist']   = _ts_to_date(alert.ts)
+            d['date_iso']   = _ts_to_date_iso(alert.ts)
             d['sl_pct_str'] = f"{alert.sl_pct * 100:.2f}%"
             d['_key']       = key
             self._history.append(d)
             # Historical alerts are not pushed to live SSE queues
+        if self._persist_dir:
+            day_file = os.path.join(self._persist_dir, f"alerts_{day_str}.jsonl")
+            try:
+                with open(day_file, 'a') as f:
+                    f.write(json.dumps(d) + '\n')
+            except Exception:
+                pass
+
+    def add_historical_event(self, d: dict, day_str: str):
+        """Add a raw backfilled event (e.g. MOM) for a past trading day. Does not push to SSE queues."""
+        if 'date_iso' not in d and 'ts' in d:
+            d['date_iso'] = _ts_to_date_iso(d['ts'])
+        key = d.get('_key', '')
+        with self._lock:
+            if key and key in self._seen:
+                return
+            if key:
+                self._seen.add(key)
+            self._history.append(d)
+            # Historical events are not pushed to live SSE queues
         if self._persist_dir:
             day_file = os.path.join(self._persist_dir, f"alerts_{day_str}.jsonl")
             try:

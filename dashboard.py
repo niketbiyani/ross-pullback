@@ -61,6 +61,16 @@ h1{font-size:15px;color:#60a5fa;letter-spacing:.5px}
 .bGn{background:#052e16;border:1px solid #166534;color:#4ade80}
 .bAm{background:#431407;border:1px solid #9a3412;color:#fb923c}
 .bGy{background:#111827;border:1px solid #1f2937;color:#374151}
+.date-in{width:108px;padding:2px 6px;background:#1f2937;border:1px solid #374151;
+         border-radius:3px;color:#e0e0e0;font-size:11px;font-family:monospace}
+.date-in::-webkit-calendar-picker-indicator{filter:invert(0.5)}
+#hist-panel{flex:1;overflow-y:auto;display:none}
+#hist-table{width:100%;border-collapse:collapse}
+#hist-table thead{position:sticky;top:0;background:#080d14}
+#hist-table th{padding:4px 10px;color:#4b5563;font-weight:normal;font-size:10px;
+               border-bottom:1px solid #0f172a;white-space:nowrap}
+#hist-table td{padding:5px 10px;border-bottom:1px solid #0a0f18;white-space:nowrap;font-size:11px}
+#hist-table tr:hover td{background:#0c1420}
 
 /* ── Alerts tab ───────────────────────────────────────────────────── */
 #tab-alerts{flex:1;display:flex;flex-direction:column;overflow:hidden}
@@ -158,6 +168,8 @@ th.sort-on.asc::after{content:' ▲'}
   <span class="fl" style="margin-left:8px">MOM ≥</span>
   <input id="alerts-mom-input" type="number" min="0" step="0.5" value="0" class="num-in">
   <span class="fl">%</span>
+  <span class="fl" style="margin-left:8px">Date:</span>
+  <input id="alerts-date" type="date" class="date-in">
 </div>
 <div class="scroller">
 <table>
@@ -186,15 +198,17 @@ th.sort-on.asc::after{content:' ▲'}
 <div id="rvol-toolbar">
   <span class="lb-title">Movers — alerted stocks only</span>
   <span class="fl" style="margin-left:12px">Vol ≥</span>
-  <input id="lb-vol-input" type="number" min="0" step="100" value="0" class="num-in">
+  <input id="lb-vol-input" type="number" min="0" step="100" value="1000" class="num-in">
   <span class="fl">K shares</span>
   <span class="fl" style="margin-left:12px">MOM ≥</span>
-  <input id="mom-input" type="number" min="0" step="0.5" value="0" class="num-in">
+  <input id="mom-input" type="number" min="0" step="0.5" value="3" class="num-in">
   <span class="fl">%</span>
   <span class="fl" style="margin-left:12px">Cum RVOL ≥</span>
   <input id="crvol-input" type="number" min="0" step="0.5" value="0" class="num-in">
   <span class="fl">×</span>
   <button id="rescan-btn" class="fb" style="margin-left:8px">↺ Rescan</button>
+  <span class="fl" style="margin-left:12px">Date:</span>
+  <input id="rvol-date" type="date" class="date-in">
   <span id="lb-count"></span>
   <span id="lb-updated"></span>
 </div>
@@ -216,6 +230,18 @@ th.sort-on.asc::after{content:' ▲'}
   <tr class="lb-empty"><td colspan="10">Waiting for alerts…</td></tr>
 </tbody>
 </table>
+<div id="hist-panel">
+<table id="hist-table">
+<thead><tr>
+  <th style="width:22px">#</th>
+  <th>Symbol</th>
+  <th>Peak MOM%</th>
+  <th>Mom Time</th>
+  <th>MACD Alerts</th>
+</tr></thead>
+<tbody id="hist-tbody"></tbody>
+</table>
+</div>
 </div>
 </div>
 
@@ -232,7 +258,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
     document.getElementById('tab-alerts').style.display = tab === 'alerts' ? 'flex' : 'none';
     document.getElementById('tab-rvol').style.display   = tab === 'rvol'   ? 'flex' : 'none';
-    if (tab === 'rvol') fetchLeaderboard();
+    if (tab === 'rvol') applyRvolDate();
     document.getElementById('count').textContent = tab === 'alerts' ? (filteredCount + ' alerts') : '';
   });
 });
@@ -283,9 +309,20 @@ function fmtV(v){
 function ratioCls(r){return r>=5?'ratio-hi':r>=2?'ratio-md':'ratio-lo';}
 function barRvolCls(r){return r>=10?'ratio-hi':r>=2?'ratio-md':'ratio-lo';}
 
+/* today in IST (for calendar defaults) */
+function todayIST() {
+  const ist = new Date(Date.now() + 5.5 * 3600 * 1000);
+  return ist.toISOString().slice(0, 10);
+}
+const _today = todayIST();
+document.getElementById('alerts-date').value = _today;
+document.getElementById('rvol-date').value   = _today;
+let alertsDateFilter = _today;
+let rvolDateFilter   = _today;
+
 let lbData     = [];
-let lbMinVol   = 0;
-let lbMinMom   = 0;
+let lbMinVol   = 1000000;
+let lbMinMom   = 3;
 let lbMinRvol  = 0;
 let lbSortCol  = 'overnight_chg';
 let lbSortDir  = -1;
@@ -374,6 +411,54 @@ function fetchLeaderboard() {
 }
 setInterval(fetchLeaderboard, 15000);
 
+document.getElementById('rvol-date').addEventListener('change', e => {
+  rvolDateFilter = e.target.value || _today;
+  if (currentTab === 'rvol') applyRvolDate();
+});
+
+function applyRvolDate() {
+  const isToday = rvolDateFilter === _today;
+  document.getElementById('lb-table').style.display  = isToday ? '' : 'none';
+  document.getElementById('hist-panel').style.display = isToday ? 'none' : 'block';
+  if (isToday) fetchLeaderboard();
+  else renderHistoricalMovers(rvolDateFilter);
+}
+
+function renderHistoricalMovers(dateISO) {
+  const dayAlerts = alerts.filter(a => a.date_iso === dateISO);
+  const symbolMap = {};
+  dayAlerts.forEach(a => {
+    const sym = a.symbol;
+    if (!symbolMap[sym]) symbolMap[sym] = {symbol: sym, peak_mom: 0, mom_time: '', macd_count: 0};
+    if (a.alert_type === 'MOM') {
+      if ((a.pct||0) > symbolMap[sym].peak_mom) {
+        symbolMap[sym].peak_mom = a.pct || 0;
+        symbolMap[sym].mom_time = a.time_ist || '';
+      }
+    } else {
+      symbolMap[sym].macd_count++;
+    }
+  });
+  const rows = Object.values(symbolMap).sort((a, b) => b.peak_mom - a.peak_mom);
+  const tbody = document.getElementById('hist-tbody');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="color:#4b5563;text-align:center;padding:20px">No alerts for this date</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map((r, i) => {
+    const momStr = r.peak_mom > 0
+      ? `<span class="${r.peak_mom>=3?'ratio-hi':r.peak_mom>=1.5?'ratio-md':'ratio-lo'}">${r.peak_mom.toFixed(2)}%</span>`
+      : '<span style="color:#1f2937">—</span>';
+    return `<tr>
+      <td style="color:#4b5563;font-size:10px">${i+1}</td>
+      <td><b>${r.symbol}</b></td>
+      <td>${momStr}</td>
+      <td style="color:#60a5fa;font-size:11px">${r.mom_time||'—'}</td>
+      <td style="color:#9ca3af">${r.macd_count||0}</td>
+    </tr>`;
+  }).join('');
+}
+
 /* ================================================================
    Alerts
    ================================================================ */
@@ -408,6 +493,10 @@ document.getElementById('alerts-mom-input').addEventListener('input', e => {
   alertMinMom = parseFloat(e.target.value) || 0;
   render();
 });
+document.getElementById('alerts-date').addEventListener('change', e => {
+  alertsDateFilter = e.target.value || _today;
+  render();
+});
 
 function emaCls(a){return a.ema_clear?'bGn':a.ema_clear_v2?'bAm':'bGy';}
 function rsiCls(a){return a.rsi_extreme?'bGn':a.rsi_extreme_v2?'bAm':'bGy';}
@@ -426,6 +515,7 @@ function tier(a){
   return 'raw';
 }
 function ok(a){
+  if (alertsDateFilter && a.date_iso && a.date_iso !== alertsDateFilter) return false;
   const isMom = a.alert_type === 'MOM';
   const momPct = isMom ? (a.pct || 0) : (a.peak_mom_pct || 0);
   if (alertMinMom > 0 && momPct < alertMinMom) return false;
