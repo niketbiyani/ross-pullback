@@ -105,7 +105,7 @@ def main():
     bar_history:   dict[str, dict[int, deque]] = {}  # symbol -> tf -> 5-bar rolling window
     peak_momentum: dict[str, dict]  = {}  # best multi-bar % move on _active_date
     range_speed:   dict[str, dict]  = {}  # how fast stock covered its avg daily range
-    mom_last_fired: dict[str, dict[int, int]] = {}  # symbol -> tf -> last bar_ts at which MOM alert fired
+    mom_last_fired: dict[str, int]  = {}  # symbol -> last bar_ts at which MOM alert fired (cross-timeframe)
     moves_log: dict[str, list[dict]] = {} # symbol → [{ts, pct, window, tf}] one entry per MOM event
 
     alerted_symbols: set[str] = set()     # symbols with any alert (MACD or MOM) today
@@ -408,13 +408,13 @@ def main():
                     'tf': tf
                 }
 
-            # Any ≥3% move immediately qualifies symbol for Movers leaderboard
-            if best_pct >= 3.0:
+            # Any ≥ MOVER_MIN_PCT move immediately qualifies symbol for Movers leaderboard
+            if best_pct >= Config.MOVER_MIN_PCT:
                 alerted_symbols.add(symbol)
 
             # Log momentum event in moves_log
-            if best_pct >= 3.0 and bar_ts - mom_last_fired.setdefault(symbol, {}).get(tf, 0) >= 300:
-                mom_last_fired[symbol][tf] = bar_ts
+            if best_pct >= Config.MOVER_MIN_PCT and bar_ts - mom_last_fired.get(symbol, 0) >= 300:
+                mom_last_fired[symbol] = bar_ts
                 ev: dict = {
                     'alert_type': 'MOM',
                     'symbol':     symbol,
@@ -427,6 +427,18 @@ def main():
                     'today_volume': today_volumes.get(symbol, 0.0),
                     '_key':       f"{symbol}:MOM:{tf}:{bar_ts}",
                 }
+                
+                # Always append to moves_log so it's fully populated
+                if symbol not in moves_log:
+                    moves_log[symbol] = []
+                if not any(m['ts'] == bar_ts for m in moves_log[symbol]):
+                    moves_log[symbol].append({
+                        'ts': bar_ts,
+                        'pct': round(best_pct, 2),
+                        'window': best_win,
+                        'tf': tf
+                    })
+
                 if is_live:
                     now_ts = int(time.time())
                     lag_s  = now_ts - (bar_ts + 60 * tf)
@@ -435,15 +447,6 @@ def main():
                     logger.info('MOM %s %.2f%% (%dm) bar=%s detected=%s lag=%ds',
                                 symbol, best_pct, tf, _ist_time(bar_ts),
                                 _ist_time(now_ts), lag_s)
-                    if symbol not in moves_log:
-                        moves_log[symbol] = []
-                    if not any(m['ts'] == bar_ts and m.get('tf') == tf for m in moves_log[symbol]):
-                        moves_log[symbol].append({
-                            'ts': bar_ts,
-                            'pct': round(best_pct, 2),
-                            'window': best_win,
-                            'tf': tf
-                        })
 
     # ── dashboard ─────────────────────────────────────────────────────────────
     def get_debug() -> dict:
@@ -536,9 +539,9 @@ def main():
                         if move > best_pct: best_pct = move; best_win = n
                 if best_pct > peak_momentum.get(name, {}).get('pct', 0.0):
                     peak_momentum[name] = {'ts': ts, 'pct': round(best_pct, 2), 'window': best_win}
-                if best_pct >= 3.0:
+                if best_pct >= Config.MOVER_MIN_PCT:
                     alerted_symbols.add(name)
-                if best_pct >= 3.0 and ts - local_last_fired.get(name, 0) >= 300:
+                if best_pct >= Config.MOVER_MIN_PCT and ts - local_last_fired.get(name, 0) >= 300:
                     local_last_fired[name] = ts
                     scan_events.append({'ts': ts, 'pct': round(best_pct, 2), 'window': best_win})
             # Merge scan events into moves_log without duplicating ts already present
@@ -645,7 +648,7 @@ def main():
                                 bar_best = move; bar_win = n
                     if bar_best > best_pct:
                         best_pct = bar_best
-                    if bar_best >= 3.0 and ts - mom_last_fired_bf.get(name, 0) >= 300:
+                    if bar_best >= Config.MOVER_MIN_PCT and ts - mom_last_fired_bf.get(name, 0) >= 300:
                         mom_last_fired_bf[name] = ts
                         alert_mgr.add_historical_event({
                             'alert_type':   'MOM',

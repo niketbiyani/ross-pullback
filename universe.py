@@ -335,6 +335,10 @@ def build_universe(dhan_context: DhanContext) -> list[dict]:
 
     # ── fetch Nifty Total Market list ─────────────────────────────────────────
     total_market_symbols = _fetch_total_market_symbols()
+    if total_market_symbols and Config.ADDITIONAL_SYMBOLS:
+        total_market_symbols = total_market_symbols.union(Config.ADDITIONAL_SYMBOLS)
+        logger.info("Merged %d custom additional symbols: %s", len(Config.ADDITIONAL_SYMBOLS), ", ".join(Config.ADDITIONAL_SYMBOLS))
+
     if not total_market_symbols:
         logger.error("Could not obtain Nifty Total Market list. Cannot proceed.")
         if os.path.exists(cache):
