@@ -321,6 +321,27 @@ def main():
             open_p   = b.get('open', 0.0)
             close    = b.get('close', 0.0)
 
+            # Check if the bar's date is today (pre-warming check)
+            from datetime import datetime, timezone, timedelta
+            ist_tz = timezone(timedelta(hours=5, minutes=30))
+            bar_date = datetime.fromtimestamp(bar_ts, tz=ist_tz).date().isoformat()
+            is_today = (bar_date == date.today().isoformat())
+            
+            if not is_today:
+                if tf == 1:
+                    ref = open_p if open_p > 0 else (low if low > 0 else 1.0)
+                    bar_range_pct = (high - low) / ref * 100 if (high > low and ref > 0) else 0.0
+                    if symbol not in rolling_bar_ranges:
+                        rolling_bar_ranges[symbol] = deque(maxlen=20)
+                    rolling_bar_ranges[symbol].append(bar_range_pct)
+                
+                if symbol not in bar_history:
+                    bar_history[symbol] = {}
+                if tf not in bar_history[symbol]:
+                    bar_history[symbol][tf] = deque(maxlen=5)
+                bar_history[symbol][tf].append({'open': open_p, 'high': high, 'low': low, 'ts': bar_ts})
+                return
+
             if tf == 1:
                 vol      = b.get('volume', 0.0)
                 # Accumulate bar data

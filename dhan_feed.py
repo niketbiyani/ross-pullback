@@ -409,27 +409,38 @@ class LiveFeed:
         self._running = False
 
 
-def fetch_today_1m_bars(client: dhanhq, symbols: list[dict]) -> dict[str, list[dict]]:
-    """Fetch today's 1-minute bars for all symbols in parallel (cached to disk)."""
-    logger.info("Fetching today's 1-minute bars for %d symbols...", len(symbols))
+def fetch_today_1m_bars(client: dhanhq, symbols: list[dict], n_days: int = 3) -> dict[str, list[dict]]:
+    """Fetch recent n_days 1-minute bars for all symbols in parallel (cached to disk)."""
+    logger.info("Fetching last %d trading days of 1-minute bars for %d symbols...", n_days, len(symbols))
+    trading_days = _trading_days(n_days)
     today = date.today().isoformat()
     results = {}
     
     def _fetch_one(sec):
         sym = sec['symbol']
-        # Check cache first
         cache = _load_cache(sym)
-        if today in cache and len(cache[today]) > 0:
-            return sym, cache[today]
+        
+        # Check if all requested trading_days are already in cache
+        missing_days = [d for d in trading_days if d not in cache or len(cache[d]) == 0]
+        if not missing_days:
+            all_bars = []
+            for d in trading_days:
+                all_bars.extend(cache[d])
+            all_bars.sort(key=lambda x: x['ts'])
+            return sym, all_bars
             
+        # We need to fetch from the oldest missing day to today
+        from_date = missing_days[0]
+        to_date = today
+        
         _api_throttle()
         try:
             resp = client.intraday_minute_data(
                 security_id=sec["security_id"],
                 exchange_segment="NSE_EQ",
                 instrument_type="EQUITY",
-                from_date=today,
-                to_date=today,
+                from_date=from_date,
+                to_date=to_date,
             )
             if isinstance(resp, dict) and isinstance(resp.get("data"), dict):
                 data = resp["data"]
@@ -439,24 +450,49 @@ def fetch_today_1m_bars(client: dhanhq, symbols: list[dict]) -> dict[str, list[d
                 los = data.get("low",    [])
                 cls = data.get("close",  [])
                 vls = data.get("volume", [])
-                bars = []
-                for i, ts in enumerate(tss):
-                    bars.append({
-                        'ts':     int(ts),
+                
+                # Group fetched bars by date (IST)
+                fetched_by_date = {}
+                from datetime import datetime, timezone, timedelta
+                ist_tz = timezone(timedelta(hours=5, minutes=30))
+                
+                for i, ts_val in enumerate(tss):
+                    dt = datetime.fromtimestamp(int(ts_val), tz=ist_tz)
+                    day_str = dt.date().isoformat()
+                    if day_str not in fetched_by_date:
+                        fetched_by_date[day_str] = []
+                    
+                    fetched_by_date[day_str].append({
+                        'ts':     int(ts_val),
                         'open':   float(ops[i]),
                         'high':   float(his[i]),
                         'low':    float(los[i]),
                         'close':  float(cls[i]),
                         'volume': float(vls[i]) if i < len(vls) else 0.0,
                     })
-                bars.sort(key=lambda x: x['ts'])
-                if bars:
-                    cache[today] = bars
+                
+                # Save each day to cache
+                for day_str, bars in fetched_by_date.items():
+                    bars.sort(key=lambda x: x['ts'])
+                    cache[day_str] = bars
+                    
+                if fetched_by_date:
                     _save_cache(sym, cache)
-                return sym, bars
+                
+                all_bars = []
+                for d in trading_days:
+                    all_bars.extend(cache.get(d, []))
+                all_bars.sort(key=lambda x: x['ts'])
+                return sym, all_bars
         except Exception as e:
-            logger.debug("Failed to fetch today's bars for %s: %s", sym, e)
-        return sym, []
+            logger.debug("Failed to fetch bars for %s (%s to %s): %s", sym, from_date, to_date, e)
+            
+        all_bars = []
+        for d in trading_days:
+            all_bars.extend(cache.get(d, []))
+        all_bars.sort(key=lambda x: x['ts'])
+        return sym, all_bars
+
 
     with ThreadPoolExecutor(max_workers=Config.MAX_WORKERS) as ex:
         futs = {ex.submit(_fetch_one, s): s for s in symbols}
