@@ -354,7 +354,13 @@ class LiveFeed:
                         res = f.result()
                         if res:
                             for seg, seg_data in res.items():
-                                all_data.setdefault(seg, {}).update(seg_data)
+                                dest = all_data.setdefault(seg, {})
+                                if isinstance(seg_data, list):
+                                    for item in seg_data:
+                                        if isinstance(item, dict):
+                                            dest.update(item)
+                                elif isinstance(seg_data, dict):
+                                    dest.update(seg_data)
                 
                 # Process the fetched data
                 nse_eq_data = all_data.get("NSE_EQ", {})
