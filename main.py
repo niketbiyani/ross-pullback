@@ -325,7 +325,7 @@ def main():
             from datetime import datetime, timezone, timedelta
             ist_tz = timezone(timedelta(hours=5, minutes=30))
             bar_date = datetime.fromtimestamp(bar_ts, tz=ist_tz).date().isoformat()
-            is_today = (bar_date == date.today().isoformat())
+            is_today = (bar_date == _active_date.isoformat())
             
             if not is_today:
                 if tf == 1:
@@ -801,7 +801,7 @@ def main():
             
             from datetime import timezone, timedelta
             ist_tz = timezone(timedelta(hours=5, minutes=30))
-            today_str = date.today().isoformat()
+            today_str = _active_date.isoformat()
             
             for ts, sym, bar in all_events:
                 # Check if the bar's date is today (for quote updates/volume tracking)
