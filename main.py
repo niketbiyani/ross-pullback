@@ -112,6 +112,7 @@ def main():
     _bootstrapping:  set[str] = set()     # symbols being history-replayed right now
 
     rolling_bar_ranges: dict[str, deque] = {}
+    last_rapid_alerts:  dict[tuple, dict] = {}
     consol_breaks:      dict[str, dict]  = {}
 
     _bootstrap_days:       dict[str, dict[str, dict]] = {}
@@ -161,6 +162,11 @@ def main():
         from datetime import timezone, timedelta as _td
         ist = datetime.fromtimestamp(ts, tz=timezone(_td(hours=5, minutes=30)))
         return ist.strftime("%d-%b")
+
+    def _ts_to_date_iso(ts: int) -> str:
+        from datetime import timezone, timedelta as _td
+        ist = datetime.fromtimestamp(ts, tz=timezone(_td(hours=5, minutes=30)))
+        return ist.strftime("%Y-%m-%d")
 
     def compute_leaderboard() -> list[dict]:
         # Use the active trading date's wall-clock position for elapsed calc;
@@ -430,6 +436,78 @@ def main():
                     'window': best_win,
                     'tf': tf
                 }
+
+            # ── Rapid Momentum Alert (No MACD logic) ──────────────────────────
+            if best_pct >= Config.RAPID_MIN_PCT:
+                key = (symbol, tf)
+                last_alert = last_rapid_alerts.get(key)
+                
+                should_alert = False
+                if last_alert is None:
+                    should_alert = True
+                else:
+                    # Alert if 5 minutes have passed, OR if the move has extended by >= 0.5%
+                    time_passed = (bar_ts - last_alert['ts']) >= 300
+                    extended = (best_pct - last_alert['pct']) >= 0.5
+                    if time_passed or extended:
+                        should_alert = True
+                
+                if should_alert:
+                    last_rapid_alerts[key] = {'ts': bar_ts, 'pct': best_pct}
+                    
+                    # Compute relative volume & day range
+                    today_vol = today_volumes.get(symbol, 0.0)
+                    avg_daily = avg_volumes.get(symbol, 0.0)
+                    
+                    # Use the active trading date's wall-clock position for elapsed calc
+                    if _active_date == date.today():
+                        now_ist_min  = (int(time.time()) // 60 + 330) % (24 * 60)
+                        elapsed_min  = min(max(now_ist_min - 555, 1), 375)
+                    else:
+                        elapsed_min = 375
+                    elapsed_frac = elapsed_min / 375.0
+                    
+                    rel_vol = round(today_vol / (avg_daily * elapsed_frac), 2) if (avg_daily > 0 and elapsed_frac > 0) else 0.0
+                    
+                    day_range_pct = 0.0
+                    op_t = today_opens.get(symbol, 0.0)
+                    if op_t > 0:
+                        h_t = today_highs.get(symbol, 0.0)
+                        l_t = today_lows.get(symbol, 0.0)
+                        if h_t > l_t > 0:
+                            day_range_pct = round((h_t - l_t) / op_t * 100, 2)
+                    
+                    # Generate alert event dictionary
+                    rapid_evt = {
+                        'symbol':        symbol,
+                        'tf':            tf,
+                        'direction':     'LONG',
+                        'wave_num':      0,
+                        'entry_price':   close,
+                        'sl_level':      low,
+                        'sl_distance':   close - low,
+                        'sl_pct':        round((close - low) / close if close > 0 else 0.0, 4),
+                        'swing_level':   open_p,
+                        'rsi_at_entry':  0.0,
+                        'ema_clear':     True,
+                        'rsi_extreme':   True,
+                        'ema_clear_v2':  True,
+                        'rsi_extreme_v2':True,
+                        'ep_len_so_far': best_win,
+                        'ts':            bar_ts,
+                        'type':          'rapid',  # identifies as rapid momentum alert
+                        'today_volume':  today_vol,
+                        'rel_volume':    rel_vol,
+                        'day_range_pct': day_range_pct,
+                        'time_ist':      _ist_time(bar_ts),
+                        'date_ist':      _ts_to_date(bar_ts),
+                        'date_iso':      _ts_to_date_iso(bar_ts),
+                        'sl_pct_str':    f"{((close - low) / close * 100):.2f}%" if close > 0 else "0.00%",
+                        '_key':          f"RAPID:{symbol}:{tf}:{bar_ts}:{best_pct:.2f}"
+                    }
+                    
+                    # Add to alert manager so it persists and broadcasts to SSE
+                    alert_mgr.add_event(rapid_evt)
 
             # Any ≥ MOVER_MIN_PCT move immediately qualifies symbol for Movers leaderboard
             if best_pct >= Config.MOVER_MIN_PCT:

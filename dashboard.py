@@ -140,112 +140,153 @@ th.sort-on.asc::after{content:' ▲'}
 <header>
   <h1>Ross Pullback Scanner</h1>
   <span id="status">connecting…</span>
-  <div id="tabs" style="display:none">
-    <button class="tab-btn" data-tab="alerts">Alerts</button>
-    <button class="tab-btn on" data-tab="rvol">Movers</button>
-  </div>
-  <span id="count"></span>
+  <span id="count" style="margin-left:auto"></span>
 </header>
-
-<!-- ── Alerts tab ─────────────────────────────────────────────────── -->
-<div id="tab-alerts">
-<div id="filters">
-  <span class="fl">Dir:</span>
-  <button class="fb on" data-g="dir" data-v="ALL">All</button>
-  <button class="fb" data-g="dir" data-v="SHORT">Short</button>
-  <button class="fb" data-g="dir" data-v="LONG">Long</button>
-  <span class="fl" style="margin-left:8px">TF:</span>
-  <button class="fb on" data-g="tf" data-v="0">All</button>
-  <button class="fb" data-g="tf" data-v="1">1m</button>
-  <button class="fb" data-g="tf" data-v="3">3m</button>
-  <button class="fb" data-g="tf" data-v="5">5m</button>
-  <button class="fb" data-g="tf" data-v="15">15m</button>
-  <span class="fl" style="margin-left:8px">Wave:</span>
-  <button class="fb on" data-g="wave" data-v="0">All</button>
-  <button class="fb" data-g="wave" data-v="1">W1</button>
-  <button class="fb" data-g="wave" data-v="2">W2</button>
-  <button class="fb" data-g="wave" data-v="3">W3+</button>
-  <span class="fl" style="margin-left:8px">Quality:</span>
-  <button class="fb on" data-g="tier" data-v="ALL">All</button>
-  <button class="fb" data-g="tier" data-v="V1">V1 only</button>
-  <button class="fb" data-g="tier" data-v="V2">V2 only</button>
-  <button class="fb" data-g="tier" data-v="QUAL">V1 + V2</button>
-  <span class="fl" style="margin-left:8px">Vol ≥</span>
-  <input id="vol-input" type="number" min="0" step="100" value="500" class="num-in">
-  <span class="fl">K shares</span>
-  <span class="fl" style="margin-left:8px">Day Rng ≥</span>
-  <input id="range-input" type="number" min="0" step="0.5" value="0" class="num-in">
-  <span class="fl">%</span>
-  <span class="fl" style="margin-left:8px">MOM ≥</span>
-  <input id="alerts-mom-input" type="number" min="0" step="0.5" value="0" class="num-in">
-  <span class="fl">%</span>
-  <span class="fl" style="margin-left:8px">Date:</span>
-  <input id="alerts-date" type="date" class="date-in">
-</div>
-<div class="scroller">
-<table>
-<thead><tr>
-  <th class="sortable" data-tbl="alert" data-col="date_ist">Date</th>
-  <th class="sortable sort-on" data-tbl="alert" data-col="ts">Time</th>
-  <th class="sortable" data-tbl="alert" data-col="symbol">Symbol</th>
-  <th class="sortable" data-tbl="alert" data-col="tf">TF</th>
-  <th class="sortable" data-tbl="alert" data-col="direction">Dir</th>
-  <th class="sortable" data-tbl="alert" data-col="wave_num">Wave</th>
-  <th class="sortable" data-tbl="alert" data-col="entry_price">Entry</th>
-  <th>SL</th>
-  <th class="sortable" data-tbl="alert" data-col="sl_pct">SL%</th>
-  <th class="sortable" data-tbl="alert" data-col="rsi_at_entry">RSI@entry</th>
-  <th>EMA &nbsp; RSI</th>
-  <th class="sortable" data-tbl="alert" data-col="today_volume">Volume</th>
-  <th class="sortable" data-tbl="alert" data-col="ep_len_so_far">Ep Bars</th>
-</tr></thead>
-<tbody id="tb"></tbody>
-</table>
-</div>
-</div>
 
 <!-- ── Rel Vol (Movers) tab with Split Screen ───────────────────────── -->
 <div id="tab-rvol">
   <div id="left-pane">
-    <div id="rvol-toolbar">
-      <span class="lb-title">Movers — Nifty Total Market Leaderboard</span>
-      <span class="fl" style="margin-left:12px">Vol ≥</span>
-      <input id="lb-vol-input" type="number" min="0" step="100" value="0" class="num-in">
-      <span class="fl">K shares</span>
-      <span class="fl" style="margin-left:12px">MOM ≥</span>
-      <input id="mom-input" type="number" min="0" step="0.5" value="2" class="num-in">
-      <span class="fl">%</span>
-      <button id="rescan-btn" class="fb" style="margin-left:8px">↺ Rescan</button>
-      <span class="fl" style="margin-left:12px">Date:</span>
-      <input id="rvol-date" type="date" class="date-in">
-      <span id="lb-count"></span>
-      <span id="lb-updated"></span>
+    <div style="padding:6px 14px;background:#080d14;border-bottom:1px solid #1f2937;display:flex;align-items:center;gap:10px;flex-shrink:0">
+      <span style="color:#60a5fa;font-size:11px;font-weight:bold;letter-spacing:.5px;text-transform:uppercase">Scanner</span>
+      <div id="tabs" style="display:flex;gap:4px;margin-left:auto">
+        <button class="tab-btn on" data-tab="rvol">Movers</button>
+        <button class="tab-btn" data-tab="pullback">Pullback Alerts</button>
+        <button class="tab-btn" data-tab="rapid">Rapid Momentum</button>
+      </div>
     </div>
-    <div id="lb-scroll">
-      <table id="lb-table">
-      <thead><tr>
-        <th style="width:22px">#</th>
-        <th class="sortable" data-tbl="lb" data-col="symbol">Symbol</th>
-        <th class="sortable" data-tbl="lb" data-col="overnight_chg">Overnight</th>
-        <th class="sortable" data-tbl="lb" data-col="peak_mom_pct">Momentum</th>
-        <th class="sortable sort-on" data-tbl="lb" data-col="peak_mom_time">Mom Time</th>
-        <th class="sortable" data-tbl="lb" data-col="peak_mom_tf">TF</th>
-        <th class="sortable" data-tbl="lb" data-col="today_vol">Today Vol</th>
-      </tr></thead>
-      <tbody id="lb-tbody">
-        <tr class="lb-empty"><td colspan="7">Waiting for alerts…</td></tr>
-      </tbody>
-      </table>
-      <div id="hist-panel">
-        <table id="hist-table">
+    
+    <!-- Panel 1: RVOL Leaderboard -->
+    <div id="panel-rvol" class="left-panel-content" style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+      <div id="rvol-toolbar">
+        <span class="lb-title">Movers — Leaderboard</span>
+        <span class="fl" style="margin-left:12px">Vol ≥</span>
+        <input id="lb-vol-input" type="number" min="0" step="100" value="0" class="num-in">
+        <span class="fl">K shares</span>
+        <span class="fl" style="margin-left:12px">MOM ≥</span>
+        <input id="mom-input" type="number" min="0" step="0.5" value="2" class="num-in">
+        <span class="fl">%</span>
+        <button id="rescan-btn" class="fb" style="margin-left:8px">↺ Rescan</button>
+        <span class="fl" style="margin-left:12px">Date:</span>
+        <input id="rvol-date" type="date" class="date-in">
+        <span id="lb-count"></span>
+        <span id="lb-updated"></span>
+      </div>
+      <div id="lb-scroll">
+        <table id="lb-table">
         <thead><tr>
           <th style="width:22px">#</th>
-          <th>Symbol</th>
-          <th>Peak MOM%</th>
-          <th>Mom Time</th>
-          <th>MACD Alerts</th>
+          <th class="sortable" data-tbl="lb" data-col="symbol">Symbol</th>
+          <th class="sortable" data-tbl="lb" data-col="overnight_chg">Overnight</th>
+          <th class="sortable" data-tbl="lb" data-col="peak_mom_pct">Momentum</th>
+          <th class="sortable sort-on" data-tbl="lb" data-col="peak_mom_time">Mom Time</th>
+          <th class="sortable" data-tbl="lb" data-col="peak_mom_tf">TF</th>
+          <th class="sortable" data-tbl="lb" data-col="today_vol">Today Vol</th>
         </tr></thead>
-        <tbody id="hist-tbody"></tbody>
+        <tbody id="lb-tbody">
+          <tr class="lb-empty"><td colspan="7">Waiting for alerts…</td></tr>
+        </tbody>
+        </table>
+        <div id="hist-panel">
+          <table id="hist-table">
+          <thead><tr>
+            <th style="width:22px">#</th>
+            <th>Symbol</th>
+            <th>Peak MOM%</th>
+            <th>Mom Time</th>
+            <th>MACD Alerts</th>
+          </tr></thead>
+          <tbody id="hist-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Panel 2: Pullback Alerts -->
+    <div id="panel-pullback" class="left-panel-content" style="flex:1;display:none;flex-direction:column;overflow:hidden">
+      <div id="filters" style="flex-shrink:0;padding:6px 14px;background:#080d14;border-bottom:1px solid #1f2937;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <span class="fl">Dir:</span>
+        <button class="fb on" data-g="dir" data-v="ALL">All</button>
+        <button class="fb" data-g="dir" data-v="SHORT">Short</button>
+        <button class="fb" data-g="dir" data-v="LONG">Long</button>
+        <span class="fl" style="margin-left:8px">TF:</span>
+        <button class="fb on" data-g="tf" data-v="0">All</button>
+        <button class="fb" data-g="tf" data-v="1">1m</button>
+        <button class="fb" data-g="tf" data-v="3">3m</button>
+        <button class="fb" data-g="tf" data-v="5">5m</button>
+        <button class="fb" data-g="tf" data-v="15">15m</button>
+        <span class="fl" style="margin-left:8px">Wave:</span>
+        <button class="fb on" data-g="wave" data-v="0">All</button>
+        <button class="fb" data-g="wave" data-v="1">W1</button>
+        <button class="fb" data-g="wave" data-v="2">W2</button>
+        <button class="fb" data-g="wave" data-v="3">W3+</button>
+        <span class="fl" style="margin-left:8px">Quality:</span>
+        <button class="fb on" data-g="tier" data-v="ALL">All</button>
+        <button class="fb" data-g="tier" data-v="V1">V1 only</button>
+        <button class="fb" data-g="tier" data-v="V2">V2 only</button>
+        <button class="fb" data-g="tier" data-v="QUAL">V1 + V2</button>
+        <span class="fl" style="margin-left:8px">Vol ≥</span>
+        <input id="vol-input" type="number" min="0" step="100" value="500" class="num-in">
+        <span class="fl">K</span>
+        <span class="fl" style="margin-left:8px">MOM ≥</span>
+        <input id="alerts-mom-input" type="number" min="0" step="0.5" value="0" class="num-in">
+        <span class="fl">%</span>
+        <span class="fl" style="margin-left:8px">Date:</span>
+        <input id="alerts-date" type="date" class="date-in">
+      </div>
+      <div class="scroller">
+        <table style="width:100%;border-collapse:collapse">
+        <thead style="position:sticky;top:0;background:#080d14;z-index:5"><tr>
+          <th class="sortable" data-tbl="alert" data-col="date_ist" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">Date</th>
+          <th class="sortable sort-on" data-tbl="alert" data-col="ts" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">Time</th>
+          <th class="sortable" data-tbl="alert" data-col="symbol" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">Symbol</th>
+          <th class="sortable" data-tbl="alert" data-col="tf" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">TF</th>
+          <th class="sortable" data-tbl="alert" data-col="direction" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">Dir</th>
+          <th class="sortable" data-tbl="alert" data-col="wave_num" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">Wave</th>
+          <th class="sortable" data-tbl="alert" data-col="entry_price" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">Entry</th>
+          <th style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">SL</th>
+          <th class="sortable" data-tbl="alert" data-col="sl_pct" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">SL%</th>
+          <th class="sortable" data-tbl="alert" data-col="rsi_at_entry" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">RSI</th>
+          <th style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">EMA &nbsp; RSI</th>
+          <th class="sortable" data-tbl="alert" data-col="today_volume" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">Volume</th>
+          <th class="sortable" data-tbl="alert" data-col="ep_len_so_far" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">Ep Bars</th>
+        </tr></thead>
+        <tbody id="tb"></tbody>
+        </table>
+      </div>
+    </div>
+    
+    <!-- Panel 3: Rapid Momentum -->
+    <div id="panel-rapid" class="left-panel-content" style="flex:1;display:none;flex-direction:column;overflow:hidden">
+      <div id="rapid-filters" style="padding:6px 14px;background:#080d14;border-bottom:1px solid #1f2937;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="fl">TF:</span>
+        <button class="fb on" data-g="rapid-tf" data-v="0">All</button>
+        <button class="fb" data-g="rapid-tf" data-v="1">1m</button>
+        <button class="fb" data-g="rapid-tf" data-v="3">3m</button>
+        <button class="fb" data-g="rapid-tf" data-v="5">5m</button>
+        <span class="fl" style="margin-left:8px">Vol ≥</span>
+        <input id="rapid-vol-input" type="number" min="0" step="100" value="500" class="num-in">
+        <span class="fl">K</span>
+        <span class="fl" style="margin-left:8px">MOM ≥</span>
+        <input id="rapid-mom-input" type="number" min="0" step="0.5" value="1.5" class="num-in">
+        <span class="fl">%</span>
+        <span class="fl" style="margin-left:8px">Date:</span>
+        <input id="rapid-date" type="date" class="date-in">
+      </div>
+      <div class="scroller">
+        <table style="width:100%;border-collapse:collapse">
+        <thead style="position:sticky;top:0;background:#080d14;z-index:5"><tr>
+          <th class="sortable" data-tbl="rapid" data-col="date_ist" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">Date</th>
+          <th class="sortable sort-on" data-tbl="rapid" data-col="ts" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">Time</th>
+          <th class="sortable" data-tbl="rapid" data-col="symbol" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">Symbol</th>
+          <th class="sortable" data-tbl="rapid" data-col="tf" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">TF</th>
+          <th class="sortable" data-tbl="rapid" data-col="entry_price" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">Price</th>
+          <th style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">SL</th>
+          <th class="sortable" data-tbl="rapid" data-col="sl_pct" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">SL%</th>
+          <th class="sortable" data-tbl="rapid" data-col="rsi_at_entry" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">RSI</th>
+          <th class="sortable" data-tbl="rapid" data-col="today_volume" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">Volume</th>
+          <th class="sortable" data-tbl="rapid" data-col="peak_mom_pct" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">MOM Move</th>
+        </tr></thead>
+        <tbody id="rapid-tb"></tbody>
         </table>
       </div>
     </div>
@@ -284,10 +325,13 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     if (tab === currentTab) return;
     currentTab = tab;
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
-    document.getElementById('tab-alerts').style.display = tab === 'alerts' ? 'flex' : 'none';
-    document.getElementById('tab-rvol').style.display   = tab === 'rvol'   ? 'flex' : 'none';
+    
+    document.getElementById('panel-rvol').style.display     = tab === 'rvol'     ? 'flex' : 'none';
+    document.getElementById('panel-pullback').style.display = tab === 'pullback' ? 'flex' : 'none';
+    document.getElementById('panel-rapid').style.display    = tab === 'rapid'    ? 'flex' : 'none';
+    
     if (tab === 'rvol') applyRvolDate();
-    document.getElementById('count').textContent = tab === 'alerts' ? (filteredCount + ' alerts') : '';
+    updateActiveCount();
   });
 });
 
@@ -319,10 +363,15 @@ document.querySelectorAll('th.sortable').forEach(th => {
       lbSortCol = col;
       markSortHeader('lb', lbSortCol, lbSortDir);
       renderLeaderboard();
-    } else {
+    } else if (tbl === 'alert') {
       alertSortDir = (alertSortCol === col) ? -alertSortDir : -1;
       alertSortCol = col;
       markSortHeader('alert', alertSortCol, alertSortDir);
+      render();
+    } else if (tbl === 'rapid') {
+      rapidSortDir = (rapidSortCol === col) ? -rapidSortDir : -1;
+      rapidSortCol = col;
+      markSortHeader('rapid', rapidSortCol, rapidSortDir);
       render();
     }
   });
@@ -843,29 +892,40 @@ function renderHistoricalMovers(dateISO) {
    ================================================================ */
 const F = {dir:'ALL', tf:'0', wave:'0', tier:'ALL', vol:'500000', range:'0'};
 let alertMinMom  = 0;
+let alertsDateFilter = _today;
+
+const FRapid = {tf:'0', vol:'500000', mom:'1.5'};
+let rapidsDateFilter = _today;
+
 let alerts       = [];
 let filteredCount = 0;
 let alertSortCol = 'ts';
 let alertSortDir = -1;
+let rapidSortCol = 'ts';
+let rapidSortDir = -1;
+
 markSortHeader('alert', alertSortCol, alertSortDir);
+markSortHeader('rapid', rapidSortCol, rapidSortDir);
 
 document.querySelectorAll('.fb').forEach(b => {
   b.addEventListener('click', () => {
     const g = b.dataset.g;
+    if (!g) return;
     document.querySelectorAll(`.fb[data-g="${g}"]`).forEach(x => x.classList.remove('on'));
     b.classList.add('on');
-    F[g] = b.dataset.v;
+    if (g.startsWith('rapid-')) {
+      const field = g.substring(6); // e.g. 'tf'
+      FRapid[field] = b.dataset.v;
+    } else {
+      F[g] = b.dataset.v;
+    }
     render();
   });
 });
+
 document.getElementById('vol-input').addEventListener('input', e => {
   const v = parseFloat(e.target.value);
   F.vol = isNaN(v) ? '0' : String(v * 1000);
-  render();
-});
-document.getElementById('range-input').addEventListener('input', e => {
-  const v = parseFloat(e.target.value);
-  F.range = isNaN(v) ? '0' : String(v);
   render();
 });
 document.getElementById('alerts-mom-input').addEventListener('input', e => {
@@ -874,6 +934,22 @@ document.getElementById('alerts-mom-input').addEventListener('input', e => {
 });
 document.getElementById('alerts-date').addEventListener('change', e => {
   alertsDateFilter = e.target.value || _today;
+  render();
+});
+
+document.getElementById('rapid-vol-input').addEventListener('input', e => {
+  const v = parseFloat(e.target.value);
+  FRapid.vol = isNaN(v) ? '0' : String(v * 1000);
+  render();
+});
+document.getElementById('rapid-mom-input').addEventListener('input', e => {
+  const v = parseFloat(e.target.value);
+  FRapid.mom = isNaN(v) ? '0' : String(v);
+  render();
+});
+document.getElementById('rapid-date').value = _today;
+document.getElementById('rapid-date').addEventListener('change', e => {
+  rapidsDateFilter = e.target.value || _today;
   render();
 });
 
@@ -893,17 +969,10 @@ function tier(a){
   if (a.ema_clear_v2 && a.rsi_extreme_v2) return 'V2';
   return 'raw';
 }
-function ok(a){
+
+function okPullback(a) {
+  if (a.type === 'rapid') return false;
   if (alertsDateFilter && a.date_iso && a.date_iso !== alertsDateFilter) return false;
-  const isMom = a.alert_type === 'MOM';
-  const momPct = isMom ? (a.pct || 0) : (a.peak_mom_pct || 0);
-  if (alertMinMom > 0 && momPct < alertMinMom) return false;
-  // MOM alerts: only show when dir=ALL, wave=ALL, tier=ALL
-  if (isMom) {
-    if (F.dir !== 'ALL' || F.wave !== '0' || F.tier !== 'ALL') return false;
-    if (F.tf !== '0' && String(a.tf) !== F.tf) return false;
-    return true;
-  }
   if (F.dir !== 'ALL' && a.direction !== F.dir) return false;
   if (F.tf  !== '0'   && String(a.tf) !== F.tf) return false;
   if (F.wave === '1' && a.wave_num !== 1) return false;
@@ -919,52 +988,116 @@ function ok(a){
   if (rt > 0 && (a.day_range_pct || 0) < rt) return false;
   return true;
 }
-function render(){
-  const scroller = document.querySelector('.scroller');
+
+function okRapid(a) {
+  if (a.type !== 'rapid') return false;
+  if (rapidsDateFilter && a.date_iso && a.date_iso !== rapidsDateFilter) return false;
+  if (FRapid.tf !== '0' && String(a.tf) !== FRapid.tf) return false;
+  const vt = parseFloat(FRapid.vol);
+  if (vt > 0 && (a.today_volume || 0) > 0 && (a.today_volume || 0) < vt) return false;
+  const mt = parseFloat(FRapid.mom);
+  const pct = a.peak_mom_pct || 0.0;
+  if (mt > 0 && pct < mt) return false;
+  return true;
+}
+
+function updateActiveCount() {
+  if (currentTab === 'pullback') {
+    const pullbackCount = applySort(alerts.filter(okPullback), alertSortCol, alertSortDir).length;
+    document.getElementById('count').textContent = pullbackCount + ' alerts';
+  } else if (currentTab === 'rapid') {
+    const rapidCount = applySort(alerts.filter(okRapid), rapidSortCol, rapidSortDir).length;
+    document.getElementById('count').textContent = rapidCount + ' alerts';
+  } else {
+    document.getElementById('count').textContent = '';
+  }
+}
+
+function renderPullbacks() {
+  const scroller = document.querySelector('#panel-pullback .scroller');
+  if (!scroller) return;
   const savedTop = scroller.scrollTop;
-  const rows = applySort(alerts.filter(ok), alertSortCol, alertSortDir);
-  filteredCount = rows.length;
-  if (currentTab === 'alerts')
-    document.getElementById('count').textContent = filteredCount + ' alerts';
+  const rows = applySort(alerts.filter(okPullback), alertSortCol, alertSortDir);
+  
   document.getElementById('tb').innerHTML = rows.map((a, i) => {
-    if (a.alert_type === 'MOM') {
-      return `<tr class="${i<3?'new':''}">
-    <td style="color:#4b5563">${a.date_ist||''}</td>
-    <td>${a.time_ist}</td>
-    <td><b>${a.symbol}</b></td>
-    <td class="tf">${a.tf}m</td>
-    <td class="MOM" colspan="2">MOM&nbsp;${a.pct.toFixed(2)}%&nbsp;${a.window}b</td>
-    <td colspan="5" style="color:#4b5563;font-size:10px">${a.detected_at_ist ? `det:${a.detected_at_ist}&nbsp;lag:${a.lag_s}s` : 'momentum signal'}</td>
-    <td>${volBadge(a)}</td>
-    <td></td>
-  </tr>`;
-    }
-    return `<tr class="${i<3?'new':''}">
-    <td style="color:#4b5563">${a.date_ist||''}</td>
-    <td>${a.time_ist}</td>
-    <td><b>${a.symbol}</b></td>
-    <td class="tf">${a.tf}m</td>
-    <td class="${a.direction}">${a.direction}</td>
-    <td class="WN">W${a.wave_num}</td>
-    <td>${a.entry_price.toFixed(2)}</td>
-    <td>${a.sl_level.toFixed(2)}</td>
-    <td>${a.sl_pct_str}</td>
-    <td>${a.rsi_at_entry.toFixed(1)}</td>
-    <td>${badges(a)}</td>
-    <td>${volBadge(a)}</td>
-    <td style="color:#6b7280">${a.ep_len_so_far}</td>
-  </tr>`;
+    return `<tr class="${i<3?'new':''}" data-sym="${a.symbol}" data-tf="${a.tf}" style="cursor:pointer">
+      <td style="color:#4b5563">${a.date_ist||''}</td>
+      <td>${a.time_ist}</td>
+      <td><b>${a.symbol}</b></td>
+      <td class="tf">${a.tf}m</td>
+      <td class="${a.direction}">${a.direction}</td>
+      <td class="WN">W${a.wave_num}</td>
+      <td>${a.entry_price.toFixed(2)}</td>
+      <td>${a.sl_level.toFixed(2)}</td>
+      <td>${a.sl_pct_str}</td>
+      <td>${a.rsi_at_entry.toFixed(1)}</td>
+      <td>${badges(a)}</td>
+      <td>${volBadge(a)}</td>
+      <td style="color:#6b7280">${a.ep_len_so_far}</td>
+    </tr>`;
   }).join('');
+  
+  document.querySelectorAll('#tb tr').forEach(row => {
+    row.addEventListener('click', () => {
+      document.querySelectorAll('#tb tr, #rapid-tb tr, .sym-header, .ep-row').forEach(r => r.classList.remove('active-row'));
+      row.classList.add('active-row');
+      loadTVChart(row.dataset.sym, parseInt(row.dataset.tf));
+    });
+  });
+  
   scroller.scrollTop = savedTop;
 }
+
+function renderRapids() {
+  const scroller = document.querySelector('#panel-rapid .scroller');
+  if (!scroller) return;
+  const savedTop = scroller.scrollTop;
+  const rows = applySort(alerts.filter(okRapid), rapidSortCol, rapidSortDir);
+  
+  document.getElementById('rapid-tb').innerHTML = rows.map((a, i) => {
+    const momBadge = `<span style="color:#facc15;font-weight:bold">${(a.peak_mom_pct || 0.0).toFixed(2)}%</span>`
+                   + `<span style="color:#4b5563;font-size:10px;margin-left:4px">${a.ep_len_so_far || 0}b</span>`;
+                   
+    return `<tr class="${i<3?'new':''}" data-sym="${a.symbol}" data-tf="${a.tf}" style="cursor:pointer">
+      <td style="color:#4b5563">${a.date_ist||''}</td>
+      <td>${a.time_ist}</td>
+      <td><b>${a.symbol}</b></td>
+      <td class="tf">${a.tf}m</td>
+      <td>${a.entry_price.toFixed(2)}</td>
+      <td>${a.sl_level.toFixed(2)}</td>
+      <td>${a.sl_pct_str}</td>
+      <td>${(a.rsi_at_entry || 0.0).toFixed(1)}</td>
+      <td>${volBadge(a)}</td>
+      <td>${momBadge}</td>
+    </tr>`;
+  }).join('');
+  
+  document.querySelectorAll('#rapid-tb tr').forEach(row => {
+    row.addEventListener('click', () => {
+      document.querySelectorAll('#tb tr, #rapid-tb tr, .sym-header, .ep-row').forEach(r => r.classList.remove('active-row'));
+      row.classList.add('active-row');
+      loadTVChart(row.dataset.sym, parseInt(row.dataset.tf));
+    });
+  });
+  
+  scroller.scrollTop = savedTop;
+}
+
+function render() {
+  renderPullbacks();
+  renderRapids();
+  updateActiveCount();
+}
+
 function mergeAlerts(incoming) {
-  const seen = new Set(alerts.map(a => a.symbol+':'+a.ts+':'+a.tf));
+  const seen = new Set(alerts.map(a => a.symbol+':'+a.ts+':'+a.tf+':'+(a.type||'pullback')));
   incoming.forEach(a => {
-    const k = a.symbol+':'+a.ts+':'+a.tf;
+    const k = a.symbol+':'+a.ts+':'+a.tf+':'+(a.type||'pullback');
     if (!seen.has(k)) { alerts.push(a); seen.add(k); }
   });
   render();
 }
+
 fetch('./api/alerts').then(r => r.json()).then(d => { alerts = d; render(); });
 fetchLeaderboard();
 

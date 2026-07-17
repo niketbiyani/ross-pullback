@@ -48,6 +48,7 @@ class Config:
     # Mover gate — only symbols crossing BOTH thresholds get a MACD engine
     MOVER_MIN_PCT:    float = float(os.getenv("MOVER_MIN_PCT",    "2.0"))     # % intraday move
     MOVER_MIN_VOLUME: float = float(os.getenv("MOVER_MIN_VOLUME", "1000000")) # cumulative shares
+    RAPID_MIN_PCT:    float = float(os.getenv("RAPID_MIN_PCT",    "1.5"))     # % rapid momentum move over N bars
 
     # Strategy parameters
     EPISODE_MIN_BARS: int  = 8
