@@ -9,11 +9,14 @@ _here    = os.path.dirname(os.path.abspath(__file__))
 _local   = os.path.join(_here, '.env')
 _rm_env  = os.path.join(_here, '..', 'Risk-Management', '.env')
 
-if os.path.exists(_local):
-    load_dotenv(_local)
-elif os.path.exists(_rm_env):
+# Load base credentials from Risk-Management first if present
+if os.path.exists(_rm_env):
     load_dotenv(_rm_env)
-    print("[config] Using credentials from ../risk-management/.env")
+    print("[config] Loaded base credentials from ../Risk-Management/.env")
+
+# Override with local settings if present
+if os.path.exists(_local):
+    load_dotenv(_local, override=True)
 
 
 class Config:
