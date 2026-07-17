@@ -102,11 +102,11 @@ def main():
     prev_closes:      dict[str, float] = {}  # last close before _active_date
     overnight_chg:    dict[str, float] = {}  # live % change vs prev_close
 
-    bar_history:   dict[str, deque] = {}  # 5-bar rolling window for momentum calc
+    bar_history:   dict[str, dict[int, deque]] = {}  # symbol -> tf -> 5-bar rolling window
     peak_momentum: dict[str, dict]  = {}  # best multi-bar % move on _active_date
     range_speed:   dict[str, dict]  = {}  # how fast stock covered its avg daily range
-    mom_last_fired: dict[str, int]  = {}  # last bar_ts at which a MOM alert fired per symbol
-    moves_log: dict[str, list[dict]] = {} # symbol → [{ts, pct, window}] one entry per MOM event
+    mom_last_fired: dict[str, dict[int, int]] = {}  # symbol -> tf -> last bar_ts at which MOM alert fired
+    moves_log: dict[str, list[dict]] = {} # symbol → [{ts, pct, window, tf}] one entry per MOM event
 
     alerted_symbols: set[str] = set()     # symbols with any alert (MACD or MOM) today
     active_symbols:  set[str] = set()     # symbols with MACD engines (≥2% move + ≥1M vol)
@@ -237,7 +237,6 @@ def main():
                 'cb_ratio':      cb_ratio,
                 'cb_pct':        cb_pct,
                 'cb_time':       cb_time,
-                'ratio':         round(ratio, 2),
                 'today_vol':     round(today_vol),
                 'avg_daily':     round(avg_daily),
                 'elapsed':       elapsed_min,
@@ -252,13 +251,14 @@ def main():
                 if mom_ev:
                     moves = [mom_ev]
                 else:
-                    moves = [{'ts': 0, 'pct': 0.0, 'window': 0}]
+                    moves = [{'ts': 0, 'pct': 0.0, 'window': 0, 'tf': 1}]
 
             for mv in moves:
                 row = dict(base)
                 row['peak_mom_pct']  = mv['pct']
                 row['peak_mom_win']  = mv.get('window', 0)
                 row['peak_mom_time'] = _ist_time(mv['ts']) if mv.get('ts') else ''
+                row['peak_mom_tf']   = mv.get('tf', 1)
                 rows.append(row)
 
         rows.sort(key=lambda x: x['overnight_chg'], reverse=True)
@@ -316,41 +316,75 @@ def main():
         b      = bar if isinstance(bar, dict) else bar.__dict__
         bar_ts = b.get('ts', b.get('timestamp', 0))
 
-        if tf == 1:
-            vol      = b.get('volume', 0.0)
+        if tf in (1, 3, 5):
             high     = b.get('high', 0.0)
             low      = b.get('low', 0.0)
             open_p   = b.get('open', 0.0)
             close    = b.get('close', 0.0)
-            bar_date = date.fromtimestamp(bar_ts)
 
-            # Accumulate bar data
-            if symbol not in today_bars:
-                today_bars[symbol] = deque(maxlen=10)
-            today_bars[symbol].append(b)
+            if tf == 1:
+                vol      = b.get('volume', 0.0)
+                # Accumulate bar data
+                if symbol not in today_bars:
+                    today_bars[symbol] = deque(maxlen=10)
+                today_bars[symbol].append(b)
 
-            # Intraday OHLC
-            if symbol not in today_opens:
-                today_opens[symbol] = open_p
-            if high > today_highs.get(symbol, 0.0):
-                today_highs[symbol] = high
-            if symbol not in today_lows or low < today_lows[symbol]:
-                today_lows[symbol] = low
+                # Intraday OHLC
+                if symbol not in today_opens:
+                    today_opens[symbol] = open_p
+                if high > today_highs.get(symbol, 0.0):
+                    today_highs[symbol] = high
+                if symbol not in today_lows or low < today_lows[symbol]:
+                    today_lows[symbol] = low
 
-            # Overnight change
-            prev_c = prev_closes.get(symbol, 0.0)
-            if prev_c > 0 and close > 0:
-                overnight_chg[symbol] = round((close - prev_c) / prev_c * 100, 2)
+                # Overnight change
+                prev_c = prev_closes.get(symbol, 0.0)
+                if prev_c > 0 and close > 0:
+                    overnight_chg[symbol] = round((close - prev_c) / prev_c * 100, 2)
 
-            # Bar range % vs open
-            ref = open_p if open_p > 0 else (low if low > 0 else 1.0)
-            bar_range_pct = (high - low) / ref * 100 if (high > low and ref > 0) else 0.0
+                # Bar range % vs open
+                ref = open_p if open_p > 0 else (low if low > 0 else 1.0)
+                bar_range_pct = (high - low) / ref * 100 if (high > low and ref > 0) else 0.0
 
-            # Momentum: best % range in any 1-5 consecutive bars
+                # Range speed: % of avg daily range covered and how fast
+                h_t = today_highs.get(symbol, 0.0)
+                l_t = today_lows.get(symbol, 0.0)
+                op_t = today_opens.get(symbol, open_p)
+                if op_t > 0 and h_t > l_t:
+                    today_rng = (h_t - l_t) / op_t * 100
+                    avg_dr    = avg_daily_ranges.get(symbol, 0.0)
+                    if avg_dr > 0:
+                        coverage = round(today_rng / avg_dr * 100, 1)
+                        m_ist    = (bar_ts // 60 + 330) % (24 * 60)
+                        elapsed  = max(m_ist - 555, 1)
+                        existing_rs = range_speed.get(symbol)
+                        if existing_rs is None or coverage > existing_rs.get('coverage', 0.0):
+                            range_speed[symbol] = {'ts': bar_ts, 'coverage': coverage, 'elapsed_mins': elapsed}
+
+                # Consolidation break: current bar ≥3× avg of last 10 bars before it
+                if symbol not in rolling_bar_ranges:
+                    rolling_bar_ranges[symbol] = deque(maxlen=20)
+                rolling_bar_ranges[symbol].append(bar_range_pct)
+                rng_list = list(rolling_bar_ranges[symbol])
+                if len(rng_list) >= 8:
+                    prev_bars = rng_list[-min(11, len(rng_list)):-1]
+                    if len(prev_bars) >= 5:
+                        prev_avg = sum(prev_bars) / len(prev_bars)
+                        if prev_avg > 0 and bar_range_pct / prev_avg >= 3.0 and bar_range_pct >= 0.15:
+                            consol_breaks[symbol] = {
+                                'ts':    bar_ts,
+                                'ratio': round(bar_range_pct / prev_avg, 1),
+                                'pct':   round(bar_range_pct, 2),
+                            }
+
+            # Momentum calculation for TF 1, 3, and 5
             if symbol not in bar_history:
-                bar_history[symbol] = deque(maxlen=5)
-            bar_history[symbol].append({'open': open_p, 'high': high, 'low': low, 'ts': bar_ts})
-            hist = list(bar_history[symbol])
+                bar_history[symbol] = {}
+            if tf not in bar_history[symbol]:
+                bar_history[symbol][tf] = deque(maxlen=5)
+            bar_history[symbol][tf].append({'open': open_p, 'high': high, 'low': low, 'ts': bar_ts})
+            hist = list(bar_history[symbol][tf])
+            
             best_pct = 0.0
             best_win = 1
             for n in range(1, len(hist) + 1):
@@ -361,71 +395,55 @@ def main():
                     if move > best_pct:
                         best_pct = move
                         best_win = n
-            if best_pct > peak_momentum.get(symbol, {}).get('pct', 0.0):
-                peak_momentum[symbol] = {'ts': bar_ts, 'pct': round(best_pct, 2), 'window': best_win}
+
+            # Peak momentum across all TFs
+            if symbol not in peak_momentum:
+                peak_momentum[symbol] = {}
+            current_peak = peak_momentum[symbol].get('pct', 0.0)
+            if best_pct > current_peak:
+                peak_momentum[symbol] = {
+                    'ts': bar_ts,
+                    'pct': round(best_pct, 2),
+                    'window': best_win,
+                    'tf': tf
+                }
 
             # Any ≥3% move immediately qualifies symbol for Movers leaderboard
             if best_pct >= 3.0:
                 alerted_symbols.add(symbol)
 
             # Log momentum event in moves_log
-            if best_pct >= 3.0 and bar_ts - mom_last_fired.get(symbol, 0) >= 300:
-                mom_last_fired[symbol] = bar_ts
+            if best_pct >= 3.0 and bar_ts - mom_last_fired.setdefault(symbol, {}).get(tf, 0) >= 300:
+                mom_last_fired[symbol][tf] = bar_ts
                 ev: dict = {
                     'alert_type': 'MOM',
                     'symbol':     symbol,
-                    'tf':         1,
+                    'tf':         tf,
                     'pct':        round(best_pct, 2),
                     'window':     best_win,
                     'ts':         bar_ts,
                     'time_ist':   _ist_time(bar_ts),
                     'date_ist':   _ts_to_date(bar_ts),
                     'today_volume': today_volumes.get(symbol, 0.0),
-                    '_key':       f"{symbol}:MOM:{bar_ts}",
+                    '_key':       f"{symbol}:MOM:{tf}:{bar_ts}",
                 }
                 if is_live:
                     now_ts = int(time.time())
-                    lag_s  = now_ts - (bar_ts + 60)
+                    lag_s  = now_ts - (bar_ts + 60 * tf)
                     ev['detected_at_ist'] = _ist_time(now_ts)
                     ev['lag_s']           = lag_s
-                    logger.info('MOM %s %.2f%% bar=%s detected=%s lag=%ds',
-                                symbol, best_pct, _ist_time(bar_ts),
+                    logger.info('MOM %s %.2f%% (%dm) bar=%s detected=%s lag=%ds',
+                                symbol, best_pct, tf, _ist_time(bar_ts),
                                 _ist_time(now_ts), lag_s)
                     if symbol not in moves_log:
                         moves_log[symbol] = []
-                    if not any(m['ts'] == bar_ts for m in moves_log[symbol]):
-                        moves_log[symbol].append({'ts': bar_ts, 'pct': round(best_pct, 2), 'window': best_win})
-
-            # Range speed: % of avg daily range covered and how fast
-            h_t = today_highs.get(symbol, 0.0)
-            l_t = today_lows.get(symbol, 0.0)
-            op_t = today_opens.get(symbol, open_p)
-            if op_t > 0 and h_t > l_t:
-                today_rng = (h_t - l_t) / op_t * 100
-                avg_dr    = avg_daily_ranges.get(symbol, 0.0)
-                if avg_dr > 0:
-                    coverage = round(today_rng / avg_dr * 100, 1)
-                    m_ist    = (bar_ts // 60 + 330) % (24 * 60)
-                    elapsed  = max(m_ist - 555, 1)
-                    existing_rs = range_speed.get(symbol)
-                    if existing_rs is None or coverage > existing_rs.get('coverage', 0.0):
-                        range_speed[symbol] = {'ts': bar_ts, 'coverage': coverage, 'elapsed_mins': elapsed}
-
-            # Consolidation break: current bar ≥3× avg of last 10 bars before it
-            if symbol not in rolling_bar_ranges:
-                rolling_bar_ranges[symbol] = deque(maxlen=20)
-            rolling_bar_ranges[symbol].append(bar_range_pct)
-            rng_list = list(rolling_bar_ranges[symbol])
-            if len(rng_list) >= 8:
-                prev_bars = rng_list[-min(11, len(rng_list)):-1]
-                if len(prev_bars) >= 5:
-                    prev_avg = sum(prev_bars) / len(prev_bars)
-                    if prev_avg > 0 and bar_range_pct / prev_avg >= 3.0 and bar_range_pct >= 0.15:
-                        consol_breaks[symbol] = {
-                            'ts':    bar_ts,
-                            'ratio': round(bar_range_pct / prev_avg, 1),
-                            'pct':   round(bar_range_pct, 2),
-                        }
+                    if not any(m['ts'] == bar_ts and m.get('tf') == tf for m in moves_log[symbol]):
+                        moves_log[symbol].append({
+                            'ts': bar_ts,
+                            'pct': round(best_pct, 2),
+                            'window': best_win,
+                            'tf': tf
+                        })
 
     # ── dashboard ─────────────────────────────────────────────────────────────
     def get_debug() -> dict:
@@ -732,8 +750,10 @@ def main():
             is_live = True
             logger.info("Starting replay of %d 1-minute bars...", len(all_events))
             for ts, sym, bar in all_events:
-                # Update quote stats
-                on_quote_update(sym, bar['close'], bar['volume'])
+                # Accumulate volume for today's total volume (intraday bars volume is per-bar)
+                current_vol = today_volumes.get(sym, 0.0) + bar['volume']
+                # Update quote stats (with cumulative volume!)
+                on_quote_update(sym, bar['close'], current_vol)
                 # Process bar
                 on_bar(sym, 1, bar)
                 # Small sleep to yield

@@ -252,20 +252,20 @@ def _build_via_dhan(dhan_context: DhanContext) -> dict[str, dict]:
     return result
 
 
-# ── Nifty 500 Constituents ───────────────────────────────────────────────────
+# ── Nifty Total Market Constituents ──────────────────────────────────────────
 
-NIFTY500_URL = "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv"
+NIFTY_TOTAL_MARKET_URL = "https://www.niftyindices.com/IndexConstituent/ind_niftytotalmarket_list.csv"
 
-def _fetch_nifty500_symbols() -> set[str]:
-    """Download Nifty 500 constituents and return their symbols. Cache for 1 day."""
-    cache_path = os.path.join(os.path.dirname(Config.UNIVERSE_CACHE), "nifty500_cache.json")
+def _fetch_total_market_symbols() -> set[str]:
+    """Download Nifty Total Market constituents and return their symbols. Cache for 1 day."""
+    cache_path = os.path.join(os.path.dirname(Config.UNIVERSE_CACHE), "nifty_totalmarket_cache.json")
     today = date.today().isoformat()
     if os.path.exists(cache_path):
         try:
             with open(cache_path) as f:
                 cached = json.load(f)
             if cached.get("date") == today:
-                logger.info("Loaded %d Nifty 500 symbols from cache", len(cached["symbols"]))
+                logger.info("Loaded %d Nifty Total Market symbols from cache", len(cached["symbols"]))
                 return set(cached["symbols"])
         except Exception:
             pass
@@ -278,9 +278,9 @@ def _fetch_nifty500_symbols() -> set[str]:
         ),
         'Referer': 'https://www.niftyindices.com/'
     }
-    logger.info("Downloading Nifty 500 constituents from %s", NIFTY500_URL)
+    logger.info("Downloading Nifty Total Market constituents from %s", NIFTY_TOTAL_MARKET_URL)
     try:
-        resp = requests.get(NIFTY500_URL, headers=headers, timeout=30)
+        resp = requests.get(NIFTY_TOTAL_MARKET_URL, headers=headers, timeout=30)
         resp.raise_for_status()
         symbols = []
         reader = csv.DictReader(io.StringIO(resp.text))
@@ -292,16 +292,16 @@ def _fetch_nifty500_symbols() -> set[str]:
             os.makedirs(os.path.dirname(cache_path), exist_ok=True)
             with open(cache_path, "w") as f:
                 json.dump({"date": today, "symbols": symbols}, f)
-            logger.info("Downloaded %d Nifty 500 symbols", len(symbols))
+            logger.info("Downloaded %d Nifty Total Market symbols", len(symbols))
             return set(symbols)
     except Exception as e:
-        logger.error("Failed to download Nifty 500 list: %s", e)
+        logger.error("Failed to download Nifty Total Market list: %s", e)
 
     if os.path.exists(cache_path):
         try:
             with open(cache_path) as f:
                 cached = json.load(f)
-            logger.warning("Using stale Nifty 500 cache from %s", cached.get("date"))
+            logger.warning("Using stale Nifty Total Market cache from %s", cached.get("date"))
             return set(cached["symbols"])
         except Exception:
             pass
@@ -315,7 +315,7 @@ def build_universe(dhan_context: DhanContext) -> list[dict]:
     """
     Return [{security_id, symbol, avg_daily_volume, avg_daily_turnover}].
     Tries bhavcopy first, falls back to stale cache to ensure instant startup.
-    Filters the universe to include only Nifty 500 constituents.
+    Filters the universe to include only Nifty Total Market constituents.
     """
     today = date.today().isoformat()
     cache = Config.UNIVERSE_CACHE
@@ -330,18 +330,18 @@ def build_universe(dhan_context: DhanContext) -> list[dict]:
         except Exception:
             pass
 
-    logger.info("Building Nifty 500 universe via NSE bhavcopy (%d-day avg)...",
+    logger.info("Building Nifty Total Market universe via NSE bhavcopy (%d-day avg)...",
                 Config.VOLUME_HISTORY_DAYS)
 
-    # ── fetch Nifty 500 list ──────────────────────────────────────────────────
-    n500 = _fetch_nifty500_symbols()
-    if not n500:
-        logger.error("Could not obtain Nifty 500 list. Cannot proceed.")
+    # ── fetch Nifty Total Market list ─────────────────────────────────────────
+    total_market_symbols = _fetch_total_market_symbols()
+    if not total_market_symbols:
+        logger.error("Could not obtain Nifty Total Market list. Cannot proceed.")
         if os.path.exists(cache):
             try:
                 with open(cache) as f:
                     data = json.load(f)
-                logger.warning("Using stale universe cache from %s due to Nifty 500 fetch failure", data.get("date"))
+                logger.warning("Using stale universe cache from %s due to fetch failure", data.get("date"))
                 return data["symbols"]
             except Exception:
                 pass
@@ -364,13 +364,13 @@ def build_universe(dhan_context: DhanContext) -> list[dict]:
         logger.error("No universe data available — aborting")
         return []
 
-    # ── apply filters & Nifty 500 check ───────────────────────────────────────
+    # ── apply filters & Nifty Total Market check ──────────────────────────────
     use_price_filter  = Config.CLOSE_MIN_PRICE > 0
     use_vol_filter    = Config.TURNOVER_THRESHOLD > 0
 
     passing: set[str] = set()
     for sym, s in sym_avg.items():
-        if sym not in n500:
+        if sym not in total_market_symbols:
             continue
         if use_price_filter and s['close'] > 0 and s['close'] < Config.CLOSE_MIN_PRICE:
             continue
@@ -378,7 +378,7 @@ def build_universe(dhan_context: DhanContext) -> list[dict]:
             continue
         passing.add(sym)
 
-    logger.info("Filters: Nifty 500, close >= ₹%.0f, turnover >= ₹%.0fL → %d symbols pass",
+    logger.info("Filters: Nifty Total Market, close >= ₹%.0f, turnover >= ₹%.0fL → %d symbols pass",
                 Config.CLOSE_MIN_PRICE, Config.TURNOVER_THRESHOLD / 1e5, len(passing))
 
     # ── map to Dhan security IDs ──────────────────────────────────────────────

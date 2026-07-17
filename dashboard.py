@@ -196,16 +196,13 @@ th.sort-on.asc::after{content:' ▲'}
 <!-- ── Rel Vol tab ────────────────────────────────────────────────── -->
 <div id="tab-rvol">
 <div id="rvol-toolbar">
-  <span class="lb-title">Movers — Nifty 500 Leaderboard</span>
+  <span class="lb-title">Movers — Nifty Total Market Leaderboard</span>
   <span class="fl" style="margin-left:12px">Vol ≥</span>
   <input id="lb-vol-input" type="number" min="0" step="100" value="0" class="num-in">
   <span class="fl">K shares</span>
   <span class="fl" style="margin-left:12px">MOM ≥</span>
   <input id="mom-input" type="number" min="0" step="0.5" value="2" class="num-in">
   <span class="fl">%</span>
-  <span class="fl" style="margin-left:12px">Cum RVOL ≥</span>
-  <input id="crvol-input" type="number" min="0" step="0.5" value="0" class="num-in">
-  <span class="fl">×</span>
   <button id="rescan-btn" class="fb" style="margin-left:8px">↺ Rescan</button>
   <span class="fl" style="margin-left:12px">Date:</span>
   <input id="rvol-date" type="date" class="date-in">
@@ -223,7 +220,7 @@ th.sort-on.asc::after{content:' ▲'}
   <th class="sortable" data-tbl="lb" data-col="peak_mom_time">Mom Time</th>
   <th class="sortable" data-tbl="lb" data-col="rs_coverage">Rng Speed</th>
   <th class="sortable" data-tbl="lb" data-col="day_range_pct">Day Rng %</th>
-  <th class="sortable" data-tbl="lb" data-col="ratio">Cum RVOL</th>
+  <th class="sortable" data-tbl="lb" data-col="peak_mom_tf">TF</th>
   <th class="sortable" data-tbl="lb" data-col="today_vol">Today Vol</th>
 </tr></thead>
 <tbody id="lb-tbody">
@@ -336,10 +333,7 @@ document.getElementById('mom-input').addEventListener('input', e => {
   lbMinMom = parseFloat(e.target.value) || 0;
   renderLeaderboard();
 });
-document.getElementById('crvol-input').addEventListener('input', e => {
-  lbMinRvol = parseFloat(e.target.value) || 0;
-  renderLeaderboard();
-});
+// crvol-input listener removed
 document.getElementById('rescan-btn').addEventListener('click', () => {
   const btn = document.getElementById('rescan-btn');
   btn.textContent = '↺ scanning…';
@@ -359,8 +353,7 @@ function renderLeaderboard() {
   if (currentTab !== 'rvol') return;
   const filtered = lbData.filter(r =>
     r.today_vol >= lbMinVol &&
-    (r.peak_mom_pct || 0) >= lbMinMom &&
-    (r.ratio || 0) >= lbMinRvol
+    (r.peak_mom_pct || 0) >= lbMinMom
   );
   const rows = applySort(filtered, lbSortCol, lbSortDir);
   document.getElementById('lb-count').textContent = rows.length + ' symbols';
@@ -395,7 +388,7 @@ function renderLeaderboard() {
       <td>${momTimeStr}</td>
       <td>${rsStr}</td>
       <td style="color:#9ca3af">${r.day_range_pct>0?r.day_range_pct.toFixed(2)+'%':'—'}</td>
-      <td class="${ratioCls(r.ratio)}">${r.ratio.toFixed(2)}×</td>
+      <td style="color:#60a5fa">${r.peak_mom_tf || 1}m</td>
       <td>${fmtV(r.today_vol)}</td>
     </tr>`;
   }).join('');
