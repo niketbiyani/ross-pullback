@@ -391,10 +391,13 @@ def main():
                 win = hist[-n:]
                 ref_o = win[0]['open']
                 if ref_o > 0:
-                    move = (max(w['high'] for w in win) - min(w['low'] for w in win)) / ref_o * 100
-                    if move > best_pct:
-                        best_pct = move
-                        best_win = n
+                    low_idx = min(range(len(win)), key=lambda idx: win[idx]['low'])
+                    high_idx = max(range(len(win)), key=lambda idx: win[idx]['high'])
+                    if low_idx <= high_idx:
+                        move = (win[high_idx]['high'] - win[low_idx]['low']) / ref_o * 100
+                        if move > best_pct:
+                            best_pct = move
+                            best_win = n
 
             # Peak momentum across all TFs
             if symbol not in peak_momentum:
@@ -535,8 +538,11 @@ def main():
                 for n in range(1, len(hist) + 1):
                     win = hist[-n:]; ref = win[0]['open']
                     if ref > 0:
-                        move = (max(w['high'] for w in win) - min(w['low'] for w in win)) / ref * 100
-                        if move > best_pct: best_pct = move; best_win = n
+                        low_idx = min(range(len(win)), key=lambda idx: win[idx]['low'])
+                        high_idx = max(range(len(win)), key=lambda idx: win[idx]['high'])
+                        if low_idx <= high_idx:
+                            move = (win[high_idx]['high'] - win[low_idx]['low']) / ref * 100
+                            if move > best_pct: best_pct = move; best_win = n
                 if best_pct > peak_momentum.get(name, {}).get('pct', 0.0):
                     peak_momentum[name] = {'ts': ts, 'pct': round(best_pct, 2), 'window': best_win}
                 if best_pct >= Config.MOVER_MIN_PCT:
@@ -643,9 +649,12 @@ def main():
                         win = hist[-n:]
                         ref = win[0]['open']
                         if ref > 0:
-                            move = (max(w['high'] for w in win) - min(w['low'] for w in win)) / ref * 100
-                            if move > bar_best:
-                                bar_best = move; bar_win = n
+                            low_idx = min(range(len(win)), key=lambda idx: win[idx]['low'])
+                            high_idx = max(range(len(win)), key=lambda idx: win[idx]['high'])
+                            if low_idx <= high_idx:
+                                move = (win[high_idx]['high'] - win[low_idx]['low']) / ref * 100
+                                if move > bar_best:
+                                    bar_best = move; bar_win = n
                     if bar_best > best_pct:
                         best_pct = bar_best
                     if bar_best >= Config.MOVER_MIN_PCT and ts - mom_last_fired_bf.get(name, 0) >= 300:
