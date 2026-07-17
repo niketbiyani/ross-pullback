@@ -416,7 +416,7 @@ function loadTVChart(symbol, tf) {
     },
   });
   
-  candleSeries = chartInstance.addCandlestickSeries({
+  candleSeries = chartInstance.addSeries(LightweightCharts.CandlestickSeries, {
     upColor: '#26a69a',
     downColor: '#ef5350',
     borderDownColor: '#ef5350',
