@@ -36,6 +36,7 @@ _HTML = r'''<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <title>Ross Pullback Scanner</title>
+<script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0d0d0d;color:#e0e0e0;font-family:monospace;font-size:13px;
@@ -88,8 +89,11 @@ h1{font-size:15px;color:#60a5fa;letter-spacing:.5px}
 .SHORT{color:#f87171}.LONG{color:#4ade80}.MOM{color:#facc15;font-weight:bold}
 .WN{color:#94a3b8}.tf{color:#38bdf8}
 
-/* ── Rel Vol tab ──────────────────────────────────────────────────── */
-#tab-rvol{flex:1;display:flex;flex-direction:column;overflow:hidden}
+/* ── Rel Vol (Movers) tab with Split Screen ───────────────────────── */
+#tab-rvol{flex:1;display:flex;flex-direction:row;overflow:hidden}
+#left-pane{width:40%;display:flex;flex-direction:column;border-right:1px solid #1f2937;overflow:hidden}
+#right-pane{width:60%;background:#151924;display:flex;flex-direction:column;position:relative}
+
 #rvol-toolbar{flex-shrink:0;padding:6px 14px;background:#080d14;border-bottom:1px solid #1f2937;
               display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .lb-title{color:#60a5fa;font-size:11px;font-weight:bold;letter-spacing:.5px;text-transform:uppercase}
@@ -99,19 +103,24 @@ h1{font-size:15px;color:#60a5fa;letter-spacing:.5px}
 #lb-scroll::-webkit-scrollbar{width:3px}
 #lb-scroll::-webkit-scrollbar-thumb{background:#1f2937}
 #lb-table{width:100%;border-collapse:collapse}
-#lb-table thead{position:sticky;top:0;background:#080d14}
-#lb-table th{padding:4px 10px;color:#4b5563;font-weight:normal;font-size:10px;
+#lb-table thead{position:sticky;top:0;background:#080d14;z-index:10}
+#lb-table th{padding:6px 10px;color:#4b5563;font-weight:normal;font-size:10px;
              border-bottom:1px solid #0f172a;white-space:nowrap}
-#lb-table td{padding:4px 10px;border-bottom:1px solid #0a0f18;white-space:nowrap;font-size:11px}
-#lb-table tr:hover td{background:#0c1420}
+#lb-table td{padding:5px 10px;border-bottom:1px solid #0a0f18;white-space:nowrap;font-size:11px}
+
+/* Hover & Active Styles */
+.sym-header:hover td{background:#141c2c}
+.ep-row:hover td{background:#1b253c !important}
+.active-row td{background:#1e3a5f !important;color:#ffffff !important}
+
 .ratio-hi{color:#4ade80;font-weight:bold}
 .ratio-md{color:#fb923c;font-weight:bold}
 .ratio-lo{color:#9ca3af}
-.bs-bar{display:inline-block;width:60px;height:6px;background:#1e293b;
-        border-radius:3px;overflow:hidden;vertical-align:middle;margin:0 4px}
-.bs-b{display:inline-block;height:100%;background:#4ade80;float:left}
-.bs-s{display:inline-block;height:100%;background:#f87171;float:right}
-.lb-empty td{color:#1f2937;font-size:11px;padding:18px 10px;text-align:center}
+.lb-empty td{color:#4b5563;font-size:11px;padding:18px 10px;text-align:center}
+
+.exp-btn{display:inline-block;width:12px;text-align:center;font-size:9px;color:#60a5fa;margin-right:4px;cursor:pointer}
+.toggle-btn{color:#38bdf8;cursor:pointer;font-size:10px;font-weight:bold;text-decoration:underline;user-select:none}
+.toggle-btn:hover{color:#60a5fa}
 
 /* ── Sortable column headers ──────────────────────────────────────── */
 th.sortable{cursor:pointer;user-select:none}
@@ -193,53 +202,63 @@ th.sort-on.asc::after{content:' ▲'}
 </div>
 </div>
 
-<!-- ── Rel Vol tab ────────────────────────────────────────────────── -->
+<!-- ── Rel Vol (Movers) tab with Split Screen ───────────────────────── -->
 <div id="tab-rvol">
-<div id="rvol-toolbar">
-  <span class="lb-title">Movers — Nifty Total Market Leaderboard</span>
-  <span class="fl" style="margin-left:12px">Vol ≥</span>
-  <input id="lb-vol-input" type="number" min="0" step="100" value="0" class="num-in">
-  <span class="fl">K shares</span>
-  <span class="fl" style="margin-left:12px">MOM ≥</span>
-  <input id="mom-input" type="number" min="0" step="0.5" value="2" class="num-in">
-  <span class="fl">%</span>
-  <button id="rescan-btn" class="fb" style="margin-left:8px">↺ Rescan</button>
-  <span class="fl" style="margin-left:12px">Date:</span>
-  <input id="rvol-date" type="date" class="date-in">
-  <span id="lb-count"></span>
-  <span id="lb-updated"></span>
-</div>
-<div id="lb-scroll">
-<table id="lb-table">
-<thead><tr>
-  <th style="width:22px">#</th>
-  <th class="sortable" data-tbl="lb" data-col="symbol">Symbol</th>
-  <th class="sortable" data-tbl="lb" data-col="bar_rvol">Vol RVOL</th>
-  <th class="sortable sort-on" data-tbl="lb" data-col="overnight_chg">Overnight</th>
-  <th class="sortable" data-tbl="lb" data-col="peak_mom_pct">Momentum</th>
-  <th class="sortable" data-tbl="lb" data-col="peak_mom_time">Mom Time</th>
-  <th class="sortable" data-tbl="lb" data-col="rs_coverage">Rng Speed</th>
-  <th class="sortable" data-tbl="lb" data-col="day_range_pct">Day Rng %</th>
-  <th class="sortable" data-tbl="lb" data-col="peak_mom_tf">TF</th>
-  <th class="sortable" data-tbl="lb" data-col="today_vol">Today Vol</th>
-</tr></thead>
-<tbody id="lb-tbody">
-  <tr class="lb-empty"><td colspan="10">Waiting for alerts…</td></tr>
-</tbody>
-</table>
-<div id="hist-panel">
-<table id="hist-table">
-<thead><tr>
-  <th style="width:22px">#</th>
-  <th>Symbol</th>
-  <th>Peak MOM%</th>
-  <th>Mom Time</th>
-  <th>MACD Alerts</th>
-</tr></thead>
-<tbody id="hist-tbody"></tbody>
-</table>
-</div>
-</div>
+  <div id="left-pane">
+    <div id="rvol-toolbar">
+      <span class="lb-title">Movers — Nifty Total Market Leaderboard</span>
+      <span class="fl" style="margin-left:12px">Vol ≥</span>
+      <input id="lb-vol-input" type="number" min="0" step="100" value="0" class="num-in">
+      <span class="fl">K shares</span>
+      <span class="fl" style="margin-left:12px">MOM ≥</span>
+      <input id="mom-input" type="number" min="0" step="0.5" value="2" class="num-in">
+      <span class="fl">%</span>
+      <button id="rescan-btn" class="fb" style="margin-left:8px">↺ Rescan</button>
+      <span class="fl" style="margin-left:12px">Date:</span>
+      <input id="rvol-date" type="date" class="date-in">
+      <span id="lb-count"></span>
+      <span id="lb-updated"></span>
+    </div>
+    <div id="lb-scroll">
+      <table id="lb-table">
+      <thead><tr>
+        <th style="width:22px">#</th>
+        <th class="sortable" data-tbl="lb" data-col="symbol">Symbol</th>
+        <th class="sortable" data-tbl="lb" data-col="overnight_chg">Overnight</th>
+        <th class="sortable" data-tbl="lb" data-col="peak_mom_pct">Momentum</th>
+        <th class="sortable sort-on" data-tbl="lb" data-col="peak_mom_time">Mom Time</th>
+        <th class="sortable" data-tbl="lb" data-col="peak_mom_tf">TF</th>
+        <th class="sortable" data-tbl="lb" data-col="today_vol">Today Vol</th>
+      </tr></thead>
+      <tbody id="lb-tbody">
+        <tr class="lb-empty"><td colspan="7">Waiting for alerts…</td></tr>
+      </tbody>
+      </table>
+      <div id="hist-panel">
+        <table id="hist-table">
+        <thead><tr>
+          <th style="width:22px">#</th>
+          <th>Symbol</th>
+          <th>Peak MOM%</th>
+          <th>Mom Time</th>
+          <th>MACD Alerts</th>
+        </tr></thead>
+        <tbody id="hist-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  
+  <div id="right-pane">
+    <div style="padding:6px 14px;background:#080d14;border-bottom:1px solid #1f2937;display:flex;align-items:center;gap:10px">
+      <span style="color:#60a5fa;font-size:11px;font-weight:bold;letter-spacing:.5px;text-transform:uppercase" id="chart-title">TradingView Live Chart</span>
+      <button id="chart-expand-btn" class="fb" style="margin-left:auto;font-size:10px;padding:2px 6px">Fullscreen Chart</button>
+    </div>
+    <div id="tv-placeholder" style="flex:1;display:flex;justify-content:center;align-items:center;color:#4b5563;font-family:monospace;font-size:12px;text-align:center">
+      Select a stock row or alert from the list to load the TradingView chart
+    </div>
+    <div id="tv-widget-container" style="flex:1;width:100%;height:100%;display:none"></div>
+  </div>
 </div>
 
 <script>
@@ -321,7 +340,7 @@ let lbData     = [];
 let lbMinVol   = 0;
 let lbMinMom   = 2;
 let lbMinRvol  = 0;
-let lbSortCol  = 'overnight_chg';
+let lbSortCol  = 'peak_mom_time';
 let lbSortDir  = -1;
 markSortHeader('lb', lbSortCol, lbSortDir);
 
@@ -333,7 +352,6 @@ document.getElementById('mom-input').addEventListener('input', e => {
   lbMinMom = parseFloat(e.target.value) || 0;
   renderLeaderboard();
 });
-// crvol-input listener removed
 document.getElementById('rescan-btn').addEventListener('click', () => {
   const btn = document.getElementById('rescan-btn');
   btn.textContent = '↺ scanning…';
@@ -349,49 +367,217 @@ document.getElementById('rescan-btn').addEventListener('click', () => {
     .catch(() => { btn.textContent = '↺ Rescan'; btn.disabled = false; });
 });
 
+/* TradingView widget state */
+let tvWidget = null;
+let currentSymbol = null;
+let currentTf = null;
+
+function loadTVChart(symbol, tf) {
+  if (currentSymbol === symbol && currentTf === tf) return;
+  currentSymbol = symbol;
+  currentTf = tf;
+  
+  document.getElementById('tv-placeholder').style.display = 'none';
+  document.getElementById('tv-widget-container').style.display = 'block';
+  document.getElementById('chart-title').textContent = `${symbol} — ${tf}m Chart`;
+  
+  const interval = String(tf || 1);
+  
+  tvWidget = new TradingView.widget({
+    autosize: true,
+    symbol: "NSE:" + symbol,
+    interval: interval,
+    timezone: "Asia/Kolkata",
+    theme: "dark",
+    style: "1",
+    locale: "en",
+    enable_publishing: false,
+    hide_side_toolbar: false,
+    allow_symbol_change: true,
+    container_id: "tv-widget-container"
+  });
+}
+
+/* Toggle Chart Fullscreen */
+let chartFullscreen = false;
+document.getElementById('chart-expand-btn').addEventListener('click', () => {
+  chartFullscreen = !chartFullscreen;
+  const leftPane = document.getElementById('left-pane');
+  const rightPane = document.getElementById('right-pane');
+  const btn = document.getElementById('chart-expand-btn');
+  
+  if (chartFullscreen) {
+    leftPane.style.display = 'none';
+    rightPane.style.width = '100%';
+    btn.textContent = 'Show List';
+  } else {
+    leftPane.style.display = 'flex';
+    leftPane.style.width = '40%';
+    rightPane.style.width = '60%';
+    btn.textContent = 'Fullscreen Chart';
+  }
+});
+
 function renderLeaderboard() {
   if (currentTab !== 'rvol') return;
   const filtered = lbData.filter(r =>
     r.today_vol >= lbMinVol &&
     (r.peak_mom_pct || 0) >= lbMinMom
   );
-  const rows = applySort(filtered, lbSortCol, lbSortDir);
-  document.getElementById('lb-count').textContent = rows.length + ' symbols';
+  
+  // Group flat records by symbol
+  const symbolGroups = {};
+  filtered.forEach(r => {
+    const sym = r.symbol;
+    if (!symbolGroups[sym]) {
+      symbolGroups[sym] = {
+        symbol: sym,
+        overnight_chg: r.overnight_chg || 0,
+        today_vol: r.today_vol || 0,
+        peak_mom_pct: 0,
+        peak_mom_win: 0,
+        peak_mom_time: '',
+        peak_mom_tf: 1,
+        episodes: []
+      };
+    }
+    symbolGroups[sym].episodes.push(r);
+    // Track the absolute peak momentum details for the main row
+    if (r.peak_mom_pct > symbolGroups[sym].peak_mom_pct) {
+      symbolGroups[sym].peak_mom_pct = r.peak_mom_pct;
+      symbolGroups[sym].peak_mom_win = r.peak_mom_win;
+      symbolGroups[sym].peak_mom_time = r.peak_mom_time;
+      symbolGroups[sym].peak_mom_tf = r.peak_mom_tf;
+    }
+  });
+
+  // Sort groups list based on the chosen column
+  const sortedGroups = Object.values(symbolGroups).sort((a, b) => {
+    let va = a[lbSortCol] ?? '';
+    let vb = b[lbSortCol] ?? '';
+    if (typeof va === 'string') return lbSortDir * va.localeCompare(vb);
+    return lbSortDir * (va - vb);
+  });
+  
+  document.getElementById('lb-count').textContent = sortedGroups.length + ' symbols';
   const tbody = document.getElementById('lb-tbody');
-  if (!rows.length) {
-    tbody.innerHTML = '<tr class="lb-empty"><td colspan="10">No alerts yet — leaderboard populates as signals fire</td></tr>';
+  if (!sortedGroups.length) {
+    tbody.innerHTML = '<tr class="lb-empty"><td colspan="7">No alerts yet — leaderboard populates as signals fire</td></tr>';
     return;
   }
-  tbody.innerHTML = rows.map((r, i) => {
-    const brvol = r.bar_rvol || 0;
-    const oc = r.overnight_chg || 0;
+  
+  let html = '';
+  let rowIdx = 1;
+  
+  sortedGroups.forEach(g => {
+    const oc = g.overnight_chg;
     const ocStr = oc !== 0
       ? `<span style="color:${oc>0?'#4ade80':'#f87171'};font-weight:bold">${oc>0?'+':''}${oc.toFixed(2)}%</span>`
       : '<span style="color:#1f2937">—</span>';
-    const momStr = r.peak_mom_pct
-      ? `<span class="${r.peak_mom_pct>=3?'ratio-hi':r.peak_mom_pct>=1.5?'ratio-md':'ratio-lo'}">${r.peak_mom_pct.toFixed(2)}%</span>`
-        + ` <span style="color:#4b5563;font-size:10px">${r.peak_mom_win}b</span>`
+      
+    const momStr = g.peak_mom_pct
+      ? `<span class="${g.peak_mom_pct>=3?'ratio-hi':g.peak_mom_pct>=1.5?'ratio-md':'ratio-lo'}">${g.peak_mom_pct.toFixed(2)}%</span>`
+        + ` <span style="color:#4b5563;font-size:10px">${g.peak_mom_win}b</span>`
       : '<span style="color:#1f2937">—</span>';
-    const momTimeStr = r.peak_mom_time
-      ? `<span style="color:#60a5fa;font-size:11px">${r.peak_mom_time}</span>`
-      : '<span style="color:#1f2937">—</span>';
-    const rsStr = r.rs_coverage
-      ? `<span style="color:#60a5fa">${r.rs_coverage.toFixed(0)}%</span>`
-        + ` <span style="color:#4b5563;font-size:10px">in ${r.rs_elapsed}m</span>`
-      : '<span style="color:#1f2937">—</span>';
-    return `<tr>
-      <td style="color:#4b5563;font-size:10px">${i+1}</td>
-      <td><b>${r.symbol}</b></td>
-      <td class="${barRvolCls(brvol)}">${brvol.toFixed(1)}×</td>
-      <td>${ocStr}</td>
-      <td>${momStr}</td>
-      <td>${momTimeStr}</td>
-      <td>${rsStr}</td>
-      <td style="color:#9ca3af">${r.day_range_pct>0?r.day_range_pct.toFixed(2)+'%':'—'}</td>
-      <td style="color:#60a5fa">${r.peak_mom_tf || 1}m</td>
-      <td>${fmtV(r.today_vol)}</td>
-    </tr>`;
-  }).join('');
+      
+    // Sort runs chronologically (newest first)
+    const sortedEps = [...g.episodes].sort((a, b) => b.peak_mom_time.localeCompare(a.peak_mom_time));
+    
+    const showOlderBtn = sortedEps.length > 3;
+    const expandIcon = showOlderBtn ? `<span class="exp-btn">▶</span>` : '';
+    
+    // Main Header Row for the symbol
+    const isActive = (currentSymbol === g.symbol && currentTf === g.peak_mom_tf) ? 'active-row' : '';
+    html += `
+      <tr class="sym-header ${isActive}" data-sym="${g.symbol}" data-tf="${g.peak_mom_tf}" style="cursor:pointer">
+        <td style="color:#4b5563;font-size:10px">${rowIdx++}</td>
+        <td><b>${expandIcon}${g.symbol}</b></td>
+        <td>${ocStr}</td>
+        <td>${momStr}</td>
+        <td style="color:#60a5fa;font-size:11px">${g.peak_mom_time || '—'}</td>
+        <td style="color:#60a5fa">${g.peak_mom_tf}m</td>
+        <td>${fmtV(g.today_vol)}</td>
+      </tr>
+    `;
+    
+    // Sub-rows (Episodes)
+    sortedEps.forEach((ep, idx) => {
+      const isOlder = idx >= 3;
+      const displayStyle = isOlder ? 'display:none' : '';
+      const epClass = isOlder ? `ep-row older-ep sym-older-${g.symbol}` : 'ep-row';
+      const epActive = (currentSymbol === g.symbol && currentTf === ep.peak_mom_tf) ? 'active-row' : '';
+      
+      const epMomStr = `<span class="${ep.peak_mom_pct>=3?'ratio-hi':ep.peak_mom_pct>=1.5?'ratio-md':'ratio-lo'}">${ep.peak_mom_pct.toFixed(2)}%</span>`
+        + ` <span style="color:#4b5563;font-size:10px">${ep.peak_mom_win}b</span>`;
+        
+      html += `
+        <tr class="${epClass} ${epActive}" data-sym="${g.symbol}" data-tf="${ep.peak_mom_tf}" style="cursor:pointer;background:#0d1117;${displayStyle}">
+          <td style="color:#4b5563;text-align:right;font-size:10px">↳</td>
+          <td style="padding-left:12px;color:#9ca3af;font-size:10px">${g.symbol} (${ep.peak_mom_tf}m)</td>
+          <td>—</td>
+          <td>${epMomStr}</td>
+          <td style="color:#60a5fa;font-size:11px">${ep.peak_mom_time}</td>
+          <td style="color:#60a5fa">${ep.peak_mom_tf}m</td>
+          <td>—</td>
+        </tr>
+      `;
+    });
+    
+    // Toggle row if we have > 3 episodes
+    if (showOlderBtn) {
+      html += `
+        <tr class="toggle-row sym-toggle-${g.symbol}" style="background:#0d1117">
+          <td></td>
+          <td colspan="6" style="padding:2px 10px">
+            <span class="toggle-btn" data-sym="${g.symbol}">+ Show ${sortedEps.length - 3} older runs</span>
+          </td>
+        </tr>
+      `;
+    }
+  });
+  
+  tbody.innerHTML = html;
+  
+  // Attach Row Click event listeners
+  tbody.querySelectorAll('.sym-header, .ep-row').forEach(row => {
+    row.addEventListener('click', e => {
+      // If expand icon clicked, ignore and let expand toggle handle it
+      if (e.target.classList.contains('exp-btn')) return;
+      
+      tbody.querySelectorAll('.sym-header, .ep-row').forEach(r => r.classList.remove('active-row'));
+      row.classList.add('active-row');
+      
+      loadTVChart(row.dataset.sym, parseInt(row.dataset.tf));
+    });
+  });
+  
+  // Attach Collapsible/Toggle button listeners
+  tbody.querySelectorAll('.toggle-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const sym = btn.dataset.sym;
+      const rows = tbody.querySelectorAll(`.sym-older-${sym}`);
+      const header = tbody.querySelector(`.sym-header[data-sym="${sym}"]`);
+      const expBtn = header.querySelector('.exp-btn');
+      
+      const isHidden = rows[0].style.display === 'none';
+      rows.forEach(r => r.style.display = isHidden ? '' : 'none');
+      btn.textContent = isHidden ? `- Hide older runs` : `+ Show ${rows.length} older runs`;
+      if (expBtn) expBtn.textContent = isHidden ? '▼' : '▶';
+    });
+  });
+  
+  // Attach Header expand icon toggle listeners
+  tbody.querySelectorAll('.exp-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const header = btn.closest('.sym-header');
+      const sym = header.dataset.sym;
+      const toggleBtn = tbody.querySelector(`.toggle-btn[data-sym="${sym}"]`);
+      if (toggleBtn) toggleBtn.click();
+    });
+  });
+
   document.getElementById('lb-updated').textContent =
     'updated ' + new Date().toTimeString().slice(0, 5);
 }
@@ -411,6 +597,8 @@ document.getElementById('rvol-date').addEventListener('change', e => {
 
 function applyRvolDate() {
   const isToday = rvolDateFilter === _today;
+  document.getElementById('left-pane').style.width = isToday ? '40%' : '100%';
+  document.getElementById('right-pane').style.display = isToday ? 'flex' : 'none';
   document.getElementById('lb-table').style.display  = isToday ? '' : 'none';
   document.getElementById('hist-panel').style.display = isToday ? 'none' : 'block';
   if (isToday) fetchLeaderboard();
