@@ -29,6 +29,7 @@ from typing import Callable
 from flask import Flask, Response, jsonify, request
 
 from alert_manager import AlertManager
+from config import Config
 
 logger = logging.getLogger(__name__)
 
