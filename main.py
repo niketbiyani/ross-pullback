@@ -803,7 +803,7 @@ def main():
             ist_tz = timezone(timedelta(hours=5, minutes=30))
             today_str = _active_date.isoformat()
             
-            for ts, sym, bar in all_events:
+            for i, (ts, sym, bar) in enumerate(all_events):
                 # Check if the bar's date is today (for quote updates/volume tracking)
                 bar_date = datetime.fromtimestamp(ts, tz=ist_tz).date().isoformat()
                 is_today_bar = (bar_date == today_str)
@@ -817,8 +817,10 @@ def main():
                 
                 # Feed bar to aggregator (which handles rollup and calls on_bar for 1m, 3m, 5m, 15m)
                 replay_aggregators[sym].feed_historical(bar)
-                # Small sleep to yield
-                time.sleep(0.001)
+                
+                # Throttle slightly to yield CPU control back to OS scheduler
+                if i % 2000 == 0:
+                    time.sleep(0.005)
             
             # Flush final in-progress bars from aggregators
             for sym, agg in replay_aggregators.items():

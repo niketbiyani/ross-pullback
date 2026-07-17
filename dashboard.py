@@ -952,8 +952,11 @@ def create_app(alert_mgr: AlertManager,
             dates = sorted(cache.keys())
             if not dates:
                 return jsonify([])
-            active_date = dates[-1] # default to latest date
-            bars_1m = cache[active_date]
+            # Combine the last 3 trading days of data for chart context
+            recent_dates = dates[-3:]
+            bars_1m = []
+            for d in recent_dates:
+                bars_1m.extend(cache[d])
             
             # Resample bars
             if tf == 1:
@@ -970,6 +973,10 @@ def create_app(alert_mgr: AlertManager,
                         g['low']   = min(g['low'], b['low'])
                         g['close'] = b['close']
                 resampled = sorted(groups.values(), key=lambda x: x['time'])
+                
+            # Shift timestamps by +5.5 hours (19800 seconds) to display in IST on Lightweight Charts
+            for b in resampled:
+                b['time'] += 19800
                 
             return jsonify(resampled)
         except Exception as e:
