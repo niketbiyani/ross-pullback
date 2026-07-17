@@ -381,6 +381,13 @@ function loadTVChart(symbol, tf) {
   document.getElementById('tv-placeholder').style.display = 'none';
   const container = document.getElementById('tv-widget-container');
   container.style.display = 'block';
+  
+  if (chartInstance) {
+    try {
+      chartInstance.remove();
+    } catch(e) {}
+    chartInstance = null;
+  }
   container.innerHTML = '';
   document.getElementById('chart-title').textContent = `${symbol} — ${tf}m Chart`;
   
@@ -411,6 +418,16 @@ function loadTVChart(symbol, tf) {
     wickDownColor: '#ef5350',
     wickUpColor: '#26a69a',
   });
+  
+  const resizeObserver = new ResizeObserver(entries => {
+    for (let entry of entries) {
+      const { width, height } = entry.contentRect;
+      if (chartInstance && width > 0 && height > 0) {
+        chartInstance.resize(width, height);
+      }
+    }
+  });
+  resizeObserver.observe(container);
   
   refreshActiveChart();
 }
