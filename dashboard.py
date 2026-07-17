@@ -37,7 +37,7 @@ _HTML = r'''<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <title>Ross Pullback Scanner</title>
-<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+<script src="./static/lightweight-charts.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0d0d0d;color:#e0e0e0;font-family:monospace;font-size:13px;
@@ -391,7 +391,13 @@ function loadTVChart(symbol, tf) {
   container.innerHTML = '';
   document.getElementById('chart-title').textContent = `${symbol} — ${tf}m Chart`;
   
+  const chartWidth = container.clientWidth || 600;
+  const chartHeight = container.clientHeight || 400;
+  console.log("loadTVChart: container size =", container.clientWidth, "x", container.clientHeight, "initializing with", chartWidth, "x", chartHeight);
+
   chartInstance = LightweightCharts.createChart(container, {
+    width: chartWidth,
+    height: chartHeight,
     layout: {
       background: { type: 'solid', color: '#151924' },
       textColor: '#d1d4dc',
@@ -883,6 +889,16 @@ def create_app(alert_mgr: AlertManager,
         _html = _html.replace('</script>\n</body>', extra_js + '\n</script>\n</body>')
 
     app = Flask(__name__)
+
+    @app.route('/static/lightweight-charts.js')
+    def static_lightweight_charts():
+        _here = os.path.dirname(os.path.abspath(__file__))
+        path = os.path.join(_here, 'lightweight-charts.js')
+        if os.path.exists(path):
+            with open(path) as f:
+                content = f.read()
+            return Response(content, mimetype='application/javascript')
+        return 'Not Found', 404
 
     @app.route('/')
     def index():
