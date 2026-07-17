@@ -330,26 +330,29 @@ def build_universe(dhan_context: DhanContext) -> list[dict]:
         except Exception:
             pass
 
-    logger.info("Building Nifty Total Market universe via NSE bhavcopy (%d-day avg)...",
-                Config.VOLUME_HISTORY_DAYS)
+    if Config.USE_TOTAL_MARKET_INDEX:
+        logger.info("Building Nifty Total Market universe via NSE bhavcopy (%d-day avg)...",
+                    Config.VOLUME_HISTORY_DAYS)
+        total_market_symbols = _fetch_total_market_symbols()
+        if total_market_symbols and Config.ADDITIONAL_SYMBOLS:
+            total_market_symbols = total_market_symbols.union(Config.ADDITIONAL_SYMBOLS)
+            logger.info("Merged %d custom additional symbols: %s", len(Config.ADDITIONAL_SYMBOLS), ", ".join(Config.ADDITIONAL_SYMBOLS))
 
-    # ── fetch Nifty Total Market list ─────────────────────────────────────────
-    total_market_symbols = _fetch_total_market_symbols()
-    if total_market_symbols and Config.ADDITIONAL_SYMBOLS:
-        total_market_symbols = total_market_symbols.union(Config.ADDITIONAL_SYMBOLS)
-        logger.info("Merged %d custom additional symbols: %s", len(Config.ADDITIONAL_SYMBOLS), ", ".join(Config.ADDITIONAL_SYMBOLS))
-
-    if not total_market_symbols:
-        logger.error("Could not obtain Nifty Total Market list. Cannot proceed.")
-        if os.path.exists(cache):
-            try:
-                with open(cache) as f:
-                    data = json.load(f)
-                logger.warning("Using stale universe cache from %s due to fetch failure", data.get("date"))
-                return data["symbols"]
-            except Exception:
-                pass
-        return []
+        if not total_market_symbols:
+            logger.error("Could not obtain Nifty Total Market list. Cannot proceed.")
+            if os.path.exists(cache):
+                try:
+                    with open(cache) as f:
+                        data = json.load(f)
+                    logger.warning("Using stale universe cache from %s due to fetch failure", data.get("date"))
+                    return data["symbols"]
+                except Exception:
+                    pass
+            return []
+    else:
+        logger.info("Building expanded universe (all NSE equities) via NSE bhavcopy (%d-day avg)...",
+                    Config.VOLUME_HISTORY_DAYS)
+        total_market_symbols = None
 
     # ── try bhavcopy ──────────────────────────────────────────────────────────
     sym_avg = _build_via_bhavcopy()
@@ -374,7 +377,7 @@ def build_universe(dhan_context: DhanContext) -> list[dict]:
 
     passing: set[str] = set()
     for sym, s in sym_avg.items():
-        if sym not in total_market_symbols:
+        if total_market_symbols is not None and sym not in total_market_symbols:
             continue
         if use_price_filter and s['close'] > 0 and s['close'] < Config.CLOSE_MIN_PRICE:
             continue
@@ -382,8 +385,9 @@ def build_universe(dhan_context: DhanContext) -> list[dict]:
             continue
         passing.add(sym)
 
-    logger.info("Filters: Nifty Total Market, close >= ₹%.0f, turnover >= ₹%.0fL → %d symbols pass",
-                Config.CLOSE_MIN_PRICE, Config.TURNOVER_THRESHOLD / 1e5, len(passing))
+    desc = "Nifty Total Market" if Config.USE_TOTAL_MARKET_INDEX else "All NSE Equities"
+    logger.info("Filters: %s, close >= ₹%.0f, turnover >= ₹%.0fL → %d symbols pass",
+                desc, Config.CLOSE_MIN_PRICE, Config.TURNOVER_THRESHOLD / 1e5, len(passing))
 
     # ── map to Dhan security IDs ──────────────────────────────────────────────
     logger.info("Fetching Dhan scrip master for security ID mapping...")

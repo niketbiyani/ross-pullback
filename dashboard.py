@@ -56,6 +56,7 @@ h1{font-size:15px;color:#60a5fa;letter-spacing:.5px}
 .fb{padding:3px 9px;border:1px solid #374151;border-radius:3px;
     background:#1f2937;color:#9ca3af;cursor:pointer;font-size:11px;font-family:monospace}
 .fb.on{background:#1e3a5f;border-color:#3b82f6;color:#e0e0e0}
+.fb.tf-btn.active{background:#2563eb !important;border-color:#3b82f6 !important;color:#ffffff !important}
 .num-in{width:68px;padding:2px 6px;background:#1f2937;border:1px solid #374151;
         border-radius:3px;color:#e0e0e0;font-size:11px;font-family:monospace}
 .b{display:inline-block;padding:1px 6px;border-radius:3px;
@@ -253,12 +254,21 @@ th.sort-on.asc::after{content:' ▲'}
   <div id="right-pane">
     <div style="padding:6px 14px;background:#080d14;border-bottom:1px solid #1f2937;display:flex;align-items:center;gap:10px">
       <span style="color:#60a5fa;font-size:11px;font-weight:bold;letter-spacing:.5px;text-transform:uppercase" id="chart-title">TradingView Live Chart</span>
+      <div id="chart-tf-selector" style="display:none;margin-left:20px;display:flex;gap:4px">
+        <button class="fb tf-btn active" id="tf-btn-1" onclick="changeChartTf(1)">1m</button>
+        <button class="fb tf-btn" id="tf-btn-3" onclick="changeChartTf(3)">3m</button>
+        <button class="fb tf-btn" id="tf-btn-5" onclick="changeChartTf(5)">5m</button>
+      </div>
       <button id="chart-expand-btn" class="fb" style="margin-left:auto;font-size:10px;padding:2px 6px">Fullscreen Chart</button>
     </div>
     <div id="tv-placeholder" style="flex:1;display:flex;justify-content:center;align-items:center;color:#4b5563;font-family:monospace;font-size:12px;text-align:center">
       Select a stock row or alert from the list to load the TradingView chart
     </div>
-    <div id="tv-widget-container" style="flex:1;width:100%;height:100%;display:none"></div>
+    <div id="tv-widget-container" style="flex:1;width:100%;height:100%;display:none;flex-direction:column;overflow:hidden;background:#151924">
+      <div id="tv-main-chart" style="flex:5;width:100%;border-bottom:1px solid #1f2937"></div>
+      <div id="tv-rsi-chart" style="flex:2;width:100%;border-bottom:1px solid #1f2937"></div>
+      <div id="tv-macd-chart" style="flex:2;width:100%"></div>
+    </div>
   </div>
 </div>
 
@@ -267,6 +277,7 @@ th.sort-on.asc::after{content:' ▲'}
    Tabs
    ================================================================ */
 let currentTab = 'rvol';
+const expandedLeaderboardSymbols = new Set();
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     const tab = btn.dataset.tab;
@@ -369,35 +380,37 @@ document.getElementById('rescan-btn').addEventListener('click', () => {
 });
 
 /* Lightweight Charts state */
-let chartInstance = null;
+let chartMain = null;
+let chartRsi = null;
+let chartMacd = null;
+
 let candleSeries = null;
+let ema20Series = null;
+let ema50Series = null;
+let rsiSeries = null;
+let macdLineSeries = null;
+let macdSigSeries = null;
+let macdHistSeries = null;
+
 let currentSymbol = null;
 let currentTf = null;
+let isSyncing = false;
 
-function loadTVChart(symbol, tf) {
-  currentSymbol = symbol;
-  currentTf = tf;
-  
-  document.getElementById('tv-placeholder').style.display = 'none';
-  const container = document.getElementById('tv-widget-container');
-  container.style.display = 'block';
-  
-  if (chartInstance) {
-    try {
-      chartInstance.remove();
-    } catch(e) {}
-    chartInstance = null;
-  }
-  container.innerHTML = '';
-  document.getElementById('chart-title').textContent = `${symbol} — ${tf}m Chart`;
-  
-  const chartWidth = container.clientWidth || 600;
-  const chartHeight = container.clientHeight || 400;
-  console.log("loadTVChart: container size =", container.clientWidth, "x", container.clientHeight, "initializing with", chartWidth, "x", chartHeight);
+function changeChartTf(tf) {
+  if (!currentSymbol) return;
+  loadTVChart(currentSymbol, tf);
+}
 
-  chartInstance = LightweightCharts.createChart(container, {
-    width: chartWidth,
-    height: chartHeight,
+function updateTfButtons(tf) {
+  document.querySelectorAll('.tf-btn').forEach(btn => btn.classList.remove('active'));
+  const activeBtn = document.getElementById(`tf-btn-${tf}`);
+  if (activeBtn) activeBtn.classList.add('active');
+}
+
+function createBaseChartConfig(width, height, showTimeScale) {
+  return {
+    width: width,
+    height: height,
     layout: {
       background: { type: 'solid', color: '#151924' },
       textColor: '#d1d4dc',
@@ -411,15 +424,51 @@ function loadTVChart(symbol, tf) {
     },
     timeScale: {
       borderColor: 'rgba(197, 203, 206, 0.4)',
+      visible: showTimeScale,
       timeVisible: true,
       secondsVisible: false,
     },
     crosshair: {
       mode: LightweightCharts.CrosshairMode.Normal,
     },
-  });
+  };
+}
+
+function loadTVChart(symbol, tf) {
+  currentSymbol = symbol;
+  currentTf = tf;
+  updateTfButtons(tf);
   
-  candleSeries = chartInstance.addSeries(LightweightCharts.CandlestickSeries, {
+  document.getElementById('tv-placeholder').style.display = 'none';
+  document.getElementById('chart-tf-selector').style.display = 'flex';
+  const container = document.getElementById('tv-widget-container');
+  container.style.display = 'flex';
+  
+  if (chartMain) { try { chartMain.remove(); } catch(e) {} chartMain = null; }
+  if (chartRsi) { try { chartRsi.remove(); } catch(e) {} chartRsi = null; }
+  if (chartMacd) { try { chartMacd.remove(); } catch(e) {} chartMacd = null; }
+  
+  candleSeries = ema20Series = ema50Series = rsiSeries = macdLineSeries = macdSigSeries = macdHistSeries = null;
+  
+  document.getElementById('chart-title').textContent = `${symbol} — ${tf}m Chart`;
+  
+  const chartWidth = container.clientWidth || 600;
+  const mainDiv = document.getElementById('tv-main-chart');
+  const rsiDiv = document.getElementById('tv-rsi-chart');
+  const macdDiv = document.getElementById('tv-macd-chart');
+  
+  const mainH = mainDiv.clientHeight || 250;
+  const rsiH = rsiDiv.clientHeight || 100;
+  const macdH = macdDiv.clientHeight || 100;
+  
+  console.log("loadTVChart: initializing 3 subcharts with width", chartWidth);
+
+  chartMain = LightweightCharts.createChart(mainDiv, createBaseChartConfig(chartWidth, mainH, false));
+  chartRsi = LightweightCharts.createChart(rsiDiv, createBaseChartConfig(chartWidth, rsiH, false));
+  chartMacd = LightweightCharts.createChart(macdDiv, createBaseChartConfig(chartWidth, macdH, true));
+  
+  // Series Main Chart
+  candleSeries = chartMain.addSeries(LightweightCharts.CandlestickSeries, {
     upColor: '#26a69a',
     downColor: '#ef5350',
     borderDownColor: '#ef5350',
@@ -427,12 +476,85 @@ function loadTVChart(symbol, tf) {
     wickDownColor: '#ef5350',
     wickUpColor: '#26a69a',
   });
+  ema20Series = chartMain.addSeries(LightweightCharts.LineSeries, {
+    color: '#29b6f6',
+    lineWidth: 1.5,
+    title: 'EMA 20',
+  });
+  ema50Series = chartMain.addSeries(LightweightCharts.LineSeries, {
+    color: '#ab47bc',
+    lineWidth: 1.5,
+    title: 'EMA 50',
+  });
+  
+  // Series RSI Chart
+  rsiSeries = chartRsi.addSeries(LightweightCharts.LineSeries, {
+    color: '#e040fb',
+    lineWidth: 1.5,
+    title: 'RSI 14',
+  });
+  rsiSeries.createPriceLine({ price: 70, color: 'rgba(239, 83, 80, 0.4)', lineStyle: 2, lineWidth: 1, axisLabelVisible: true, title: 'OB 70' });
+  rsiSeries.createPriceLine({ price: 30, color: 'rgba(38, 166, 154, 0.4)', lineStyle: 2, lineWidth: 1, axisLabelVisible: true, title: 'OS 30' });
+  rsiSeries.createPriceLine({ price: 50, color: 'rgba(255, 255, 255, 0.15)', lineStyle: 2, lineWidth: 1, axisLabelVisible: false });
+
+  // Series MACD Chart
+  macdLineSeries = chartMacd.addSeries(LightweightCharts.LineSeries, {
+    color: '#29b6f6',
+    lineWidth: 1.2,
+    title: 'MACD',
+  });
+  macdSigSeries = chartMacd.addSeries(LightweightCharts.LineSeries, {
+    color: '#ffa726',
+    lineWidth: 1.2,
+    title: 'Signal',
+  });
+  macdHistSeries = chartMacd.addSeries(LightweightCharts.HistogramSeries, {
+    title: 'Histogram',
+  });
+
+  // Sync Time Scales (zoom / scroll)
+  const charts = [chartMain, chartRsi, chartMacd];
+  charts.forEach((chart, idx, arr) => {
+    chart.timeScale().subscribeVisibleTimeRangeChange(range => {
+      if (isSyncing || !range) return;
+      isSyncing = true;
+      arr.forEach(other => {
+        if (other !== chart) {
+          other.timeScale().setVisibleRange(range);
+        }
+      });
+      isSyncing = false;
+    });
+  });
+
+  // Sync Crosshairs
+  charts.forEach((chart, idx, arr) => {
+    chart.subscribeCrosshairMove(param => {
+      if (isSyncing) return;
+      isSyncing = true;
+      arr.forEach(other => {
+        if (other !== chart) {
+          if (!param || !param.time) {
+            other.clearCrosshairPosition();
+          } else {
+            other.setCrosshairPosition(param.time);
+          }
+        }
+      });
+      isSyncing = false;
+    });
+  });
   
   const resizeObserver = new ResizeObserver(entries => {
     for (let entry of entries) {
-      const { width, height } = entry.contentRect;
-      if (chartInstance && width > 0 && height > 0) {
-        chartInstance.resize(width, height);
+      const { width } = entry.contentRect;
+      if (width > 0) {
+        const mH = mainDiv.clientHeight;
+        const rH = rsiDiv.clientHeight;
+        const mcH = macdDiv.clientHeight;
+        if (chartMain && mH > 0) chartMain.resize(width, mH);
+        if (chartRsi && rH > 0) chartRsi.resize(width, rH);
+        if (chartMacd && mcH > 0) chartMacd.resize(width, mcH);
       }
     }
   });
@@ -447,7 +569,17 @@ function refreshActiveChart() {
     .then(r => r.json())
     .then(data => {
       if (data && data.length > 0) {
-        candleSeries.setData(data);
+        candleSeries.setData(data.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close })));
+        ema20Series.setData(data.map(d => ({ time: d.time, value: d.ema20 })));
+        ema50Series.setData(data.map(d => ({ time: d.time, value: d.ema50 })));
+        rsiSeries.setData(data.map(d => ({ time: d.time, value: d.rsi })));
+        macdLineSeries.setData(data.map(d => ({ time: d.time, value: d.macd })));
+        macdSigSeries.setData(data.map(d => ({ time: d.time, value: d.macd_sig })));
+        macdHistSeries.setData(data.map(d => ({
+          time: d.time,
+          value: d.macd_hist,
+          color: d.macd_hist >= 0 ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
+        })));
       }
     })
     .catch(err => console.error("Error loading chart data:", err));
@@ -540,7 +672,8 @@ function renderLeaderboard() {
     const sortedEps = [...g.episodes].sort((a, b) => b.peak_mom_time.localeCompare(a.peak_mom_time));
     
     const showOlderBtn = sortedEps.length > 3;
-    const expandIcon = showOlderBtn ? `<span class="exp-btn">▶</span>` : '';
+    const isExpanded = expandedLeaderboardSymbols.has(g.symbol);
+    const expandIcon = showOlderBtn ? `<span class="exp-btn">${isExpanded ? '▼' : '▶'}</span>` : '';
     
     // Main Header Row for the symbol
     const isActive = (currentSymbol === g.symbol && currentTf === g.peak_mom_tf) ? 'active-row' : '';
@@ -559,7 +692,7 @@ function renderLeaderboard() {
     // Sub-rows (Episodes)
     sortedEps.forEach((ep, idx) => {
       const isOlder = idx >= 3;
-      const displayStyle = isOlder ? 'display:none' : '';
+      const displayStyle = (isOlder && !isExpanded) ? 'display:none' : '';
       const epClass = isOlder ? `ep-row older-ep sym-older-${g.symbol}` : 'ep-row';
       const epActive = (currentSymbol === g.symbol && currentTf === ep.peak_mom_tf) ? 'active-row' : '';
       
@@ -585,7 +718,7 @@ function renderLeaderboard() {
         <tr class="toggle-row sym-toggle-${g.symbol}" style="background:#0d1117">
           <td></td>
           <td colspan="6" style="padding:2px 10px">
-            <span class="toggle-btn" data-sym="${g.symbol}">+ Show ${sortedEps.length - 3} older runs</span>
+            <span class="toggle-btn" data-sym="${g.symbol}">${isExpanded ? '- Hide older runs' : `+ Show ${sortedEps.length - 3} older runs`}</span>
           </td>
         </tr>
       `;
@@ -617,9 +750,17 @@ function renderLeaderboard() {
       const expBtn = header.querySelector('.exp-btn');
       
       const isHidden = rows[0].style.display === 'none';
-      rows.forEach(r => r.style.display = isHidden ? '' : 'none');
-      btn.textContent = isHidden ? `- Hide older runs` : `+ Show ${rows.length} older runs`;
-      if (expBtn) expBtn.textContent = isHidden ? '▼' : '▶';
+      if (isHidden) {
+        expandedLeaderboardSymbols.add(sym);
+        rows.forEach(r => r.style.display = '');
+        btn.textContent = `- Hide older runs`;
+        if (expBtn) expBtn.textContent = '▼';
+      } else {
+        expandedLeaderboardSymbols.delete(sym);
+        rows.forEach(r => r.style.display = 'none');
+        btn.textContent = `+ Show ${rows.length} older runs`;
+        if (expBtn) expBtn.textContent = '▶';
+      }
     });
   });
   
@@ -873,6 +1014,52 @@ connectSSE();
 '''
 
 
+def compute_ema(prices: list[float], period: int) -> list[float]:
+    if not prices:
+        return []
+    ema = []
+    alpha = 2.0 / (period + 1.0)
+    current = prices[0]
+    for p in prices:
+        current = p * alpha + current * (1.0 - alpha)
+        ema.append(current)
+    return ema
+
+def compute_rsi(prices: list[float], period: int = 14) -> list[float]:
+    if len(prices) < 2:
+        return [50.0] * len(prices)
+    rsi = []
+    deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
+    avg_gain = sum(d for d in deltas[:period] if d > 0) / period
+    avg_loss = sum(-d for d in deltas[:period] if d < 0) / period
+    
+    for i in range(period):
+        rsi.append(50.0)
+        
+    for i in range(period, len(prices)):
+        d = deltas[i-1]
+        gain = d if d > 0 else 0.0
+        loss = -d if d < 0 else 0.0
+        avg_gain = (avg_gain * (period - 1) + gain) / period
+        avg_loss = (avg_loss * (period - 1) + loss) / period
+        if avg_loss == 0:
+            rsi.append(100.0)
+        else:
+            rs = avg_gain / avg_loss
+            rsi.append(100.0 - (100.0 / (1.0 + rs)))
+    return rsi
+
+def compute_macd(prices: list[float], fast_period: int = 12, slow_period: int = 26, signal_period: int = 9):
+    ema12 = compute_ema(prices, fast_period)
+    ema26 = compute_ema(prices, slow_period)
+    macd_line = []
+    for e12, e26 in zip(ema12, ema26):
+        macd_line.append(e12 - e26)
+        
+    signal_line = compute_ema(macd_line, signal_period)
+    macd_hist = [m - s for m, s in zip(macd_line, signal_line)]
+    return macd_line, signal_line, macd_hist
+
 def create_app(alert_mgr: AlertManager,
                get_leaderboard: Callable[[], list[dict]],
                get_debug: Callable[[], dict] | None = None,
@@ -977,6 +1164,22 @@ def create_app(alert_mgr: AlertManager,
                         g['close'] = b['close']
                 resampled = sorted(groups.values(), key=lambda x: x['time'])
                 
+            # Compute technical indicators (EMA, RSI, MACD)
+            if resampled:
+                closes = [x['close'] for x in resampled]
+                ema20 = compute_ema(closes, 20)
+                ema50 = compute_ema(closes, 50)
+                rsi = compute_rsi(closes, 14)
+                macd_line, macd_signal, macd_hist = compute_macd(closes)
+                
+                for idx, r in enumerate(resampled):
+                    r['ema20']     = round(ema20[idx], 2)     if idx < len(ema20) else None
+                    r['ema50']     = round(ema50[idx], 2)     if idx < len(ema50) else None
+                    r['rsi']       = round(rsi[idx], 2)       if idx < len(rsi) else 50.0
+                    r['macd']      = round(macd_line[idx], 3)   if idx < len(macd_line) else 0.0
+                    r['macd_sig']  = round(macd_signal[idx], 3) if idx < len(macd_signal) else 0.0
+                    r['macd_hist'] = round(macd_hist[idx], 3)   if idx < len(macd_hist) else 0.0
+
             # Shift timestamps by +5.5 hours (19800 seconds) to display in IST on Lightweight Charts
             for b in resampled:
                 b['time'] += 19800

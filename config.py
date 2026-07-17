@@ -40,6 +40,8 @@ class Config:
     TURNOVER_THRESHOLD: float  = float(os.getenv("TURNOVER_THRESHOLD", "1000000"))   # ₹10L
     VOLUME_HISTORY_DAYS: int   = int(os.getenv("VOLUME_HISTORY_DAYS", "10"))
 
+    USE_TOTAL_MARKET_INDEX: bool = os.getenv("USE_TOTAL_MARKET_INDEX", "False").lower() in ("true", "1", "yes")
+    
     # Custom symbols list to always include (comma-separated, e.g. "RESPONIND,FINOPB")
     ADDITIONAL_SYMBOLS: list[str] = [s.strip().upper() for s in os.getenv("ADDITIONAL_SYMBOLS", "").split(",") if s.strip()]
 
