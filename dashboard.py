@@ -892,7 +892,7 @@ function renderHistoricalMovers(dateISO) {
    ================================================================ */
 const F = {dir:'ALL', tf:'0', wave:'0', tier:'ALL', vol:'500000', range:'0'};
 let alertMinMom  = 0;
-let alertsDateFilter = _today;
+alertsDateFilter = _today;
 
 const FRapid = {tf:'0', vol:'500000', mom:'1.5'};
 let rapidsDateFilter = _today;
