@@ -414,6 +414,9 @@ function loadTVChart(symbol, tf) {
       timeVisible: true,
       secondsVisible: false,
     },
+    crosshair: {
+      mode: LightweightCharts.CrosshairMode.Normal,
+    },
   });
   
   candleSeries = chartInstance.addSeries(LightweightCharts.CandlestickSeries, {
