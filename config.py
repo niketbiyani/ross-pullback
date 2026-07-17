@@ -37,7 +37,7 @@ class Config:
     #     illiquid names even above ₹100).  Set very low so the dashboard volume
     #     filter is the real quality gate during the day.
     CLOSE_MIN_PRICE: float     = float(os.getenv("CLOSE_MIN_PRICE", "100"))
-    TURNOVER_THRESHOLD: float  = float(os.getenv("TURNOVER_THRESHOLD", "5000000"))   # ₹50L
+    TURNOVER_THRESHOLD: float  = float(os.getenv("TURNOVER_THRESHOLD", "1000000"))   # ₹10L
     VOLUME_HISTORY_DAYS: int   = int(os.getenv("VOLUME_HISTORY_DAYS", "10"))
 
     USE_TOTAL_MARKET_INDEX: bool = os.getenv("USE_TOTAL_MARKET_INDEX", "False").lower() in ("true", "1", "yes")
