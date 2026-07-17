@@ -22,10 +22,11 @@ Volume badge on alert rows (today's cumulative intraday volume at alert time):
 """
 import json
 import logging
+import os
 import time
 from typing import Callable
 
-from flask import Flask, Response, jsonify
+from flask import Flask, Response, jsonify, request
 
 from alert_manager import AlertManager
 
@@ -36,7 +37,7 @@ _HTML = r'''<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <title>Ross Pullback Scanner</title>
-<script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0d0d0d;color:#e0e0e0;font-family:monospace;font-size:13px;
@@ -367,36 +368,65 @@ document.getElementById('rescan-btn').addEventListener('click', () => {
     .catch(() => { btn.textContent = '↺ Rescan'; btn.disabled = false; });
 });
 
-/* TradingView widget state */
-let tvWidget = null;
+/* Lightweight Charts state */
+let chartInstance = null;
+let candleSeries = null;
 let currentSymbol = null;
 let currentTf = null;
 
 function loadTVChart(symbol, tf) {
-  if (currentSymbol === symbol && currentTf === tf) return;
   currentSymbol = symbol;
   currentTf = tf;
   
   document.getElementById('tv-placeholder').style.display = 'none';
-  document.getElementById('tv-widget-container').style.display = 'block';
+  const container = document.getElementById('tv-widget-container');
+  container.style.display = 'block';
+  container.innerHTML = '';
   document.getElementById('chart-title').textContent = `${symbol} — ${tf}m Chart`;
   
-  const interval = String(tf || 1);
-  
-  tvWidget = new TradingView.widget({
-    autosize: true,
-    symbol: "NSE:" + symbol,
-    interval: interval,
-    timezone: "Asia/Kolkata",
-    theme: "dark",
-    style: "1",
-    locale: "en",
-    enable_publishing: false,
-    hide_side_toolbar: false,
-    allow_symbol_change: true,
-    container_id: "tv-widget-container"
+  chartInstance = LightweightCharts.createChart(container, {
+    layout: {
+      background: { type: 'solid', color: '#151924' },
+      textColor: '#d1d4dc',
+    },
+    grid: {
+      vertLines: { color: 'rgba(42, 46, 57, 0.15)' },
+      horzLines: { color: 'rgba(42, 46, 57, 0.15)' },
+    },
+    rightPriceScale: {
+      borderColor: 'rgba(197, 203, 206, 0.4)',
+    },
+    timeScale: {
+      borderColor: 'rgba(197, 203, 206, 0.4)',
+      timeVisible: true,
+      secondsVisible: false,
+    },
   });
+  
+  candleSeries = chartInstance.addCandlestickSeries({
+    upColor: '#26a69a',
+    downColor: '#ef5350',
+    borderDownColor: '#ef5350',
+    borderUpColor: '#26a69a',
+    wickDownColor: '#ef5350',
+    wickUpColor: '#26a69a',
+  });
+  
+  refreshActiveChart();
 }
+
+function refreshActiveChart() {
+  if (!currentSymbol || !candleSeries) return;
+  fetch(`./api/bars?symbol=${currentSymbol}&tf=${currentTf}`)
+    .then(r => r.json())
+    .then(data => {
+      if (data && data.length > 0) {
+        candleSeries.setData(data);
+      }
+    })
+    .catch(err => console.error("Error loading chart data:", err));
+}
+
 
 /* Toggle Chart Fullscreen */
 let chartFullscreen = false;
@@ -586,6 +616,7 @@ function fetchLeaderboard() {
   fetch('./api/rvol-leaderboard').then(r => r.json()).then(rows => {
     lbData = rows;
     renderLeaderboard();
+    refreshActiveChart();
   }).catch(() => {});
 }
 setInterval(fetchLeaderboard, 5000);
@@ -870,6 +901,47 @@ def create_app(alert_mgr: AlertManager,
             return jsonify({'error': 'not ready — bootstrap still running'}), 503
         n = fn()
         return jsonify({'new_symbols': n})
+
+    @app.route('/api/bars')
+    def api_bars():
+        symbol = request.args.get('symbol')
+        tf = int(request.args.get('tf', 1))
+        
+        # Load cache
+        from config import Config
+        cache_path = os.path.join(Config.BARS_CACHE_DIR, f"{symbol}.json")
+        if not os.path.exists(cache_path):
+            return jsonify([])
+            
+        try:
+            with open(cache_path) as f:
+                cache = json.load(f)
+            dates = sorted(cache.keys())
+            if not dates:
+                return jsonify([])
+            active_date = dates[-1] # default to latest date
+            bars_1m = cache[active_date]
+            
+            # Resample bars
+            if tf == 1:
+                resampled = [{'time': b['ts'], 'open': b['open'], 'high': b['high'], 'low': b['low'], 'close': b['close']} for b in bars_1m]
+            else:
+                groups = {}
+                for b in bars_1m:
+                    gts = (b['ts'] // (tf * 60)) * (tf * 60)
+                    if gts not in groups:
+                        groups[gts] = {'time': gts, 'open': b['open'], 'high': b['high'], 'low': b['low'], 'close': b['close']}
+                    else:
+                        g = groups[gts]
+                        g['high']  = max(g['high'], b['high'])
+                        g['low']   = min(g['low'], b['low'])
+                        g['close'] = b['close']
+                resampled = sorted(groups.values(), key=lambda x: x['time'])
+                
+            return jsonify(resampled)
+        except Exception as e:
+            logger.error("Error serving api/bars for %s: %s", symbol, e)
+            return jsonify([])
 
     @app.route('/stream')
     def stream():
