@@ -281,9 +281,6 @@ th.sort-on.asc::after{content:' ▲'}
           <th class="sortable" data-tbl="rapid" data-col="symbol" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">Symbol</th>
           <th class="sortable" data-tbl="rapid" data-col="tf" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">TF</th>
           <th class="sortable" data-tbl="rapid" data-col="entry_price" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">Price</th>
-          <th style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">SL</th>
-          <th class="sortable" data-tbl="rapid" data-col="sl_pct" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">SL%</th>
-          <th class="sortable" data-tbl="rapid" data-col="rsi_at_entry" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">RSI</th>
           <th class="sortable" data-tbl="rapid" data-col="today_volume" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">Volume</th>
           <th class="sortable" data-tbl="rapid" data-col="peak_mom_pct" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">MOM Move</th>
         </tr></thead>
@@ -514,9 +511,10 @@ function loadTVChart(symbol, tf) {
   
   console.log("loadTVChart: initializing 3 subcharts with width", chartWidth);
 
+  const rsiShowTimeScale = !ENABLE_PULLBACKS;
   chartMain = LightweightCharts.createChart(mainDiv, createBaseChartConfig(chartWidth, mainH, false));
-  chartRsi = LightweightCharts.createChart(rsiDiv, createBaseChartConfig(chartWidth, rsiH, false));
-  chartMacd = LightweightCharts.createChart(macdDiv, createBaseChartConfig(chartWidth, macdH, true));
+  chartRsi = LightweightCharts.createChart(rsiDiv, createBaseChartConfig(chartWidth, rsiH, rsiShowTimeScale));
+  chartMacd = LightweightCharts.createChart(macdDiv, createBaseChartConfig(chartWidth, macdH, ENABLE_PULLBACKS));
   
   // Series Main Chart
   candleSeries = chartMain.addSeries(LightweightCharts.CandlestickSeries, {
@@ -531,11 +529,15 @@ function loadTVChart(symbol, tf) {
     color: '#29b6f6',
     lineWidth: 1.5,
     title: 'EMA 20',
+    lastValueVisible: false,
+    priceLineVisible: false,
   });
   ema50Series = chartMain.addSeries(LightweightCharts.LineSeries, {
     color: '#ab47bc',
     lineWidth: 1.5,
     title: 'EMA 50',
+    lastValueVisible: false,
+    priceLineVisible: false,
   });
   
   // Series RSI Chart
@@ -543,6 +545,8 @@ function loadTVChart(symbol, tf) {
     color: '#e040fb',
     lineWidth: 1.5,
     title: 'RSI 14',
+    lastValueVisible: false,
+    priceLineVisible: false,
   });
   rsiSeries.createPriceLine({ price: 70, color: 'rgba(239, 83, 80, 0.4)', lineStyle: 2, lineWidth: 1, axisLabelVisible: true, title: 'OB 70' });
   rsiSeries.createPriceLine({ price: 30, color: 'rgba(38, 166, 154, 0.4)', lineStyle: 2, lineWidth: 1, axisLabelVisible: true, title: 'OS 30' });
@@ -553,11 +557,15 @@ function loadTVChart(symbol, tf) {
     color: '#29b6f6',
     lineWidth: 1.2,
     title: 'MACD',
+    lastValueVisible: false,
+    priceLineVisible: false,
   });
   macdSigSeries = chartMacd.addSeries(LightweightCharts.LineSeries, {
     color: '#ffa726',
     lineWidth: 1.2,
     title: 'Signal',
+    lastValueVisible: false,
+    priceLineVisible: false,
   });
   macdHistSeries = chartMacd.addSeries(LightweightCharts.HistogramSeries, {
     title: 'Histogram',
@@ -579,16 +587,26 @@ function loadTVChart(symbol, tf) {
   });
 
   // Sync Crosshairs
+  function getSeriesForChart(chart) {
+    if (chart === chartMain) return candleSeries;
+    if (chart === chartRsi) return rsiSeries;
+    if (chart === chartMacd) return macdLineSeries;
+    return null;
+  }
   charts.forEach((chart, idx, arr) => {
     chart.subscribeCrosshairMove(param => {
       if (isSyncing) return;
       isSyncing = true;
       arr.forEach(other => {
         if (other !== chart) {
-          if (!param || !param.time) {
+          if (!param || !param.time || !param.point) {
             other.clearCrosshairPosition();
           } else {
-            other.setCrosshairPosition(param.time);
+            const otherSeries = getSeriesForChart(other);
+            if (otherSeries) {
+              const fallbackPrice = other === chartRsi ? 50 : 0;
+              other.setCrosshairPosition(fallbackPrice, param.time, otherSeries);
+            }
           }
         }
       });
@@ -1066,9 +1084,6 @@ function renderRapids() {
       <td><b>${a.symbol}</b></td>
       <td class="tf">${a.tf}m</td>
       <td>${a.entry_price.toFixed(2)}</td>
-      <td>${a.sl_level.toFixed(2)}</td>
-      <td>${a.sl_pct_str}</td>
-      <td>${(a.rsi_at_entry || 0.0).toFixed(1)}</td>
       <td>${volBadge(a)}</td>
       <td>${momBadge}</td>
     </tr>`;
@@ -1122,6 +1137,16 @@ checkBootstrap();
 /* ================================================================
    SSE
    ================================================================ */
+let sseUpdateTimeout = null;
+function queueSseUpdate() {
+  if (sseUpdateTimeout) return;
+  sseUpdateTimeout = setTimeout(() => {
+    render();
+    fetchLeaderboard();
+    sseUpdateTimeout = null;
+  }, 150);
+}
+
 function connectSSE() {
   const es = new EventSource('./stream');
   es.onopen = () => {
@@ -1138,8 +1163,7 @@ function connectSSE() {
   es.addEventListener('alert', e => {
     alerts.unshift(JSON.parse(e.data));
     if (alerts.length > 5000) alerts.pop();
-    render();
-    fetchLeaderboard();
+    queueSseUpdate();
   });
 }
 if (!ENABLE_PULLBACKS) {
