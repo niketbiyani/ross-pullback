@@ -264,7 +264,7 @@ th.sort-on.asc::after{content:' ▲'}
         <button class="fb" data-g="rapid-tf" data-v="3">3m</button>
         <button class="fb" data-g="rapid-tf" data-v="5">5m</button>
         <span class="fl" style="margin-left:8px">Vol ≥</span>
-        <input id="rapid-vol-input" type="number" min="0" step="100" value="500" class="num-in">
+        <input id="rapid-vol-input" type="number" min="0" step="100" value="0" class="num-in">
         <span class="fl">K</span>
         <span class="fl" style="margin-left:8px">MOM ≥</span>
         <input id="rapid-mom-input" type="number" min="0" step="0.5" value="1.5" class="num-in">
@@ -314,6 +314,7 @@ th.sort-on.asc::after{content:' ▲'}
 </div>
 
 <script>
+const ENABLE_PULLBACKS = true;
 /* ================================================================
    Tabs
    ================================================================ */
@@ -894,7 +895,7 @@ const F = {dir:'ALL', tf:'0', wave:'0', tier:'ALL', vol:'500000', range:'0'};
 let alertMinMom  = 0;
 alertsDateFilter = _today;
 
-const FRapid = {tf:'0', vol:'500000', mom:'1.5'};
+const FRapid = {tf:'0', vol:'0', mom:'1.5'};
 let rapidsDateFilter = _today;
 
 let alerts       = [];
@@ -1140,6 +1141,16 @@ function connectSSE() {
     fetchLeaderboard();
   });
 }
+if (!ENABLE_PULLBACKS) {
+  const pullbackBtn = document.querySelector('.tab-btn[data-tab="pullback"]');
+  if (pullbackBtn) pullbackBtn.style.display = 'none';
+  const macdChartDiv = document.getElementById('tv-macd-chart');
+  if (macdChartDiv) {
+    macdChartDiv.style.display = 'none';
+    const rsiDiv = document.getElementById('tv-rsi-chart');
+    if (rsiDiv) rsiDiv.style.borderBottom = 'none';
+  }
+}
 connectSSE();
 </script>
 </body>
@@ -1225,7 +1236,8 @@ def create_app(alert_mgr: AlertManager,
 
     @app.route('/')
     def index():
-        resp = Response(_html, mimetype='text/html')
+        html_content = _html.replace("const ENABLE_PULLBACKS = true;", f"const ENABLE_PULLBACKS = {str(Config.ENABLE_PULLBACKS).lower()};")
+        resp = Response(html_content, mimetype='text/html')
         resp.headers['Cache-Control'] = 'no-store'
         return resp
 
