@@ -105,8 +105,7 @@ def main():
     bar_history:   dict[str, dict[int, deque]] = {}  # symbol -> tf -> 5-bar rolling window
     peak_momentum: dict[str, dict]  = {}  # best multi-bar % move on _active_date
     range_speed:   dict[str, dict]  = {}  # how fast stock covered its avg daily range
-    mom_last_fired: dict[str, int]  = {}  # symbol -> last bar_ts at which MOM alert fired (cross-timeframe)
-    moves_log: dict[str, list[dict]] = {} # symbol → [{ts, pct, window, tf}] one entry per MOM event
+    moves_log: dict[str, list[dict]] = {} # symbol → [{ts, pct, window, tf, peak_ts}] one entry per MOM event
 
     alerted_symbols: set[str] = set()     # symbols with any alert (MACD or MOM) today
     active_symbols:  set[str] = set()     # symbols with MACD engines (≥2% move + ≥1M vol)
@@ -414,39 +413,38 @@ def main():
             # Any ≥ MOVER_MIN_PCT move immediately qualifies symbol for Movers leaderboard
             if best_pct >= Config.MOVER_MIN_PCT:
                 alerted_symbols.add(symbol)
-
-            # Log momentum event in moves_log
-            if best_pct >= Config.MOVER_MIN_PCT and bar_ts - mom_last_fired.get(symbol, 0) >= 300:
-                mom_last_fired[symbol] = bar_ts
-                ev: dict = {
-                    'alert_type': 'MOM',
-                    'symbol':     symbol,
-                    'tf':         tf,
-                    'pct':        round(best_pct, 2),
-                    'window':     best_win,
-                    'ts':         bar_ts,
-                    'time_ist':   _ist_time(bar_ts),
-                    'date_ist':   _ts_to_date(bar_ts),
-                    'today_volume': today_volumes.get(symbol, 0.0),
-                    '_key':       f"{symbol}:MOM:{tf}:{bar_ts}",
-                }
                 
-                # Always append to moves_log so it's fully populated
                 if symbol not in moves_log:
                     moves_log[symbol] = []
-                if not any(m['ts'] == bar_ts for m in moves_log[symbol]):
+                
+                # Check for active episode within 10 minutes of the last peak
+                active_ep = None
+                for ep in moves_log[symbol]:
+                    if abs(bar_ts - ep.get('peak_ts', ep['ts'])) <= 600:
+                        active_ep = ep
+                        break
+                
+                if active_ep:
+                    # Update active episode if new pct is higher
+                    if best_pct > active_ep['pct']:
+                        active_ep['pct']     = round(best_pct, 2)
+                        active_ep['window']  = best_win
+                        active_ep['tf']      = tf
+                        active_ep['peak_ts'] = bar_ts
+                        active_ep['ts']      = bar_ts  # update timestamp to show latest high on the table
+                else:
+                    # Create new separate episode
                     moves_log[symbol].append({
-                        'ts': bar_ts,
-                        'pct': round(best_pct, 2),
-                        'window': best_win,
-                        'tf': tf
+                        'ts':      bar_ts,
+                        'peak_ts': bar_ts,
+                        'pct':     round(best_pct, 2),
+                        'window':  best_win,
+                        'tf':      tf
                     })
 
                 if is_live:
                     now_ts = int(time.time())
                     lag_s  = now_ts - (bar_ts + 60 * tf)
-                    ev['detected_at_ist'] = _ist_time(now_ts)
-                    ev['lag_s']           = lag_s
                     logger.info('MOM %s %.2f%% (%dm) bar=%s detected=%s lag=%ds',
                                 symbol, best_pct, tf, _ist_time(bar_ts),
                                 _ist_time(now_ts), lag_s)
@@ -547,17 +545,31 @@ def main():
                     peak_momentum[name] = {'ts': ts, 'pct': round(best_pct, 2), 'window': best_win}
                 if best_pct >= Config.MOVER_MIN_PCT:
                     alerted_symbols.add(name)
-                if best_pct >= Config.MOVER_MIN_PCT and ts - local_last_fired.get(name, 0) >= 300:
-                    local_last_fired[name] = ts
-                    scan_events.append({'ts': ts, 'pct': round(best_pct, 2), 'window': best_win})
-            # Merge scan events into moves_log without duplicating ts already present
-            existing_ts = {m['ts'] for m in moves_log.get(name, [])}
-            if name not in moves_log:
-                moves_log[name] = []
-            for ev in scan_events:
-                if ev['ts'] not in existing_ts:
-                    moves_log[name].append(ev)
-                    existing_ts.add(ev['ts'])
+                    
+                    if name not in moves_log:
+                        moves_log[name] = []
+                    
+                    # Check for active episode within 10 minutes of the last peak
+                    active_ep = None
+                    for ep in moves_log[name]:
+                        if abs(ts - ep.get('peak_ts', ep['ts'])) <= 600:
+                            active_ep = ep
+                            break
+                    
+                    if active_ep:
+                        if best_pct > active_ep['pct']:
+                            active_ep['pct']     = round(best_pct, 2)
+                            active_ep['window']  = best_win
+                            active_ep['peak_ts'] = ts
+                            active_ep['ts']      = ts
+                    else:
+                        moves_log[name].append({
+                            'ts':      ts,
+                            'peak_ts': ts,
+                            'pct':     round(best_pct, 2),
+                            'window':  best_win,
+                            'tf':      1  # default rescan tf
+                        })
             if vol_total > 0:   today_volumes[name]  = vol_total
             if t_high  > 0:     today_highs[name]    = t_high
             if t_low   < float('inf') and t_low > 0: today_lows[name] = t_low
