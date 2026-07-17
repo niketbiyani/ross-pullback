@@ -748,6 +748,10 @@ def main():
                 all_events.append((b['ts'], sym, b))
         all_events.sort(key=lambda x: x[0])
         
+        # Initialize aggregators for replay rollup
+        from bar_aggregator import BarAggregator
+        replay_aggregators = {s['symbol']: BarAggregator(s['symbol'], on_bar) for s in symbols}
+        
         def _run_replay():
             nonlocal is_live
             is_live = True
@@ -757,10 +761,17 @@ def main():
                 current_vol = today_volumes.get(sym, 0.0) + bar['volume']
                 # Update quote stats (with cumulative volume!)
                 on_quote_update(sym, bar['close'], current_vol)
-                # Process bar
-                on_bar(sym, 1, bar)
+                # Feed bar to aggregator (which handles rollup and calls on_bar for 1m, 3m, 5m, 15m)
+                replay_aggregators[sym].feed_historical(bar)
                 # Small sleep to yield
                 time.sleep(0.001)
+            
+            # Flush final in-progress bars from aggregators
+            for sym, agg in replay_aggregators.items():
+                for tf, cur in list(agg._bars.items()):
+                    if cur:
+                        on_bar(sym, tf, cur)
+                        
             logger.info("Replay complete! Transitioning to live polling...")
             feed.start()
             
