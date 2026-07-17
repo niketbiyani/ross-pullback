@@ -15,6 +15,7 @@ from typing import Callable
 from dhanhq import DhanContext, dhanhq
 
 from config import Config
+from bar_aggregator import BarAggregator
 
 logger = logging.getLogger(__name__)
 
@@ -271,246 +272,127 @@ def bootstrap(dhan_context: DhanContext,
               symbols: list[dict],
               on_bar: Callable[[str, int, dict], None],
               skip_tfs: frozenset = frozenset()):
-    """
-    Load/fetch history of 1-min data for every symbol (from cache when possible),
-    derive higher-TF bars, and call on_bar(symbol, tf, bar_dict) for each bar.
-    TFs listed in skip_tfs are not emitted — use bootstrap_macd for those.
-    """
-    logger.info("Bootstrapping %d symbols × %d days (1-min, skip_tfs=%s)...",
-                len(symbols), Config.HISTORY_DAYS, sorted(skip_tfs) or 'none')
-    client     = dhanhq(dhan_context)
-    total_api  = 0
-
-    def _one(sec: dict):
-        bars_1m, api_calls = _fetch_history(client, sec, Config.HISTORY_DAYS)
-        name = sec["symbol"]
-        for tf in Config.TIMEFRAMES:
-            if tf in skip_tfs:
-                continue
-            bars = bars_1m if tf == 1 else _resample(bars_1m, tf)
-            for b in bars:
-                on_bar(name, tf, b)
-        return name, len(bars_1m), api_calls
-
-    with ThreadPoolExecutor(max_workers=Config.MAX_WORKERS) as ex:
-        futs = {ex.submit(_one, s): s for s in symbols}
-        done = 0
-        for fut in as_completed(futs):
-            name, n, calls = fut.result()
-            total_api += calls
-            done += 1
-            if done % 25 == 0 or done == len(symbols):
-                logger.info("  Bootstrap: %d / %d symbols  (API calls so far: %d)",
-                            done, len(symbols), total_api)
-
-    logger.info("Bootstrap complete. Total API calls: %d (0 = fully cached).", total_api)
+    """Zero-bootstrap fallback: skip downloading history."""
+    logger.info("Bootstrap skipped (zero-bootstrap mode active)")
+    return
 
 
 def bootstrap_macd(dhan_context: DhanContext,
                    symbols: list[dict],
                    on_bar: Callable[[str, int, dict], None],
                    macd_tfs: tuple = (15, 30, 60)):
-    """
-    Bootstrap accurate native bars for each TF.
-    Fetches 5/15/60-min directly from Dhan API; derives 30-min from native 15-min
-    (Dhan API does not support interval=30; 2 bars per 30-min candle = minimal drift).
-    Eliminates EMA/signal drift caused by resampling 20+ days of 1-min bars.
-    """
-    # Intervals supported natively by Dhan intraday_minute_data
-    _NATIVE_TFS  = frozenset({5, 15, 60})
-    native_fetch = tuple(tf for tf in macd_tfs if tf in _NATIVE_TFS)
-    needs_30m    = 30 in macd_tfs
-
-    logger.info("Native bootstrap: %d symbols × TFs %s (native: %s%s)",
-                len(symbols),
-                '/'.join(str(t) for t in macd_tfs),
-                '/'.join(str(t) for t in native_fetch),
-                ' + 30m derived from native 15m' if needs_30m else '')
-    client    = dhanhq(dhan_context)
-    total_api = 0
-
-    def _one(sec: dict):
-        name:      str       = sec["symbol"]
-        api_calls: int       = 0
-        bars_15m:  list[dict] = []
-
-        for tf in native_fetch:
-            bars, calls = _fetch_history_native(client, sec, Config.HISTORY_DAYS, tf)
-            if tf == 15:
-                bars_15m = bars
-            for b in bars:
-                on_bar(name, tf, b)
-            api_calls += calls
-
-        if needs_30m:
-            if not bars_15m:
-                bars_15m, _ = _fetch_history_native(client, sec, Config.HISTORY_DAYS, 15)
-            for b in _resample(bars_15m, 30):
-                on_bar(name, 30, b)
-
-        return name, api_calls
-
-    with ThreadPoolExecutor(max_workers=Config.MAX_WORKERS) as ex:
-        futs = {ex.submit(_one, s): s for s in symbols}
-        done = 0
-        for fut in as_completed(futs):
-            name, calls = fut.result()
-            total_api += calls
-            done += 1
-            if done % 25 == 0 or done == len(symbols):
-                logger.info("  Native bootstrap: %d / %d symbols  (API calls: %d)",
-                            done, len(symbols), total_api)
-
-    logger.info("Native bootstrap complete. Total API calls: %d.", total_api)
+    """Zero-bootstrap fallback: skip downloading history."""
+    logger.info("Native bootstrap skipped (zero-bootstrap mode active)")
+    return
 
 
 # ── live intraday polling feed ────────────────────────────────────────────────
 
+def _chunk_list(lst, n):
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
+
+
 class LiveFeed:
     """
-    Polls intraday_minute_data for today every 60 s and calls
-    on_bar(symbol, tf, bar_dict) for each new closed bar across 1/3/5/15-min.
-    Uses the same endpoint as bootstrap — no live data subscription required.
+    Polls quote_data for all 500 Nifty symbols every 5 seconds,
+    maintains real-time 1-minute bars in memory, and feeds closed bars
+    to the BarAggregator for timeframe rollup.
     """
 
     def __init__(self, dhan_context: DhanContext,
                  symbols: list[dict],
                  on_bar: Callable[[str, int, dict], None],
-                 on_volume: Callable[[str, list[dict]], None] | None = None,
-                 priority_fn: Callable[[], set[str]] | None = None):
+                 on_quote: Callable[[str, float, float], None] | None = None):
         self._client      = dhanhq(dhan_context)
         self._symbols     = symbols
         self._on_bar      = on_bar
-        self._on_volume   = on_volume
-        self._priority_fn = priority_fn   # returns set of high-priority symbols (active movers)
-        self._last_ts: dict[tuple, int] = {}   # (symbol, tf) -> last processed ts
+        self._on_quote    = on_quote
+        self._aggregators = {s['symbol']: BarAggregator(s['symbol'], on_bar) for s in symbols}
+        self._sec_id_to_symbol = {str(s["security_id"]): s["symbol"] for s in symbols}
+        self._current_bar: dict[str, dict | None] = {s['symbol']: None for s in symbols}
         self._running = False
         self._thread: threading.Thread | None = None
 
-    def _fetch_today(self, sec: dict) -> list[dict]:
-        today = date.today().isoformat()
-        name  = sec["symbol"]
-        _api_throttle()
-        try:
-            resp = self._client.intraday_minute_data(
-                security_id=sec["security_id"],
-                exchange_segment="NSE_EQ",
-                instrument_type="EQUITY",
-                from_date=today,
-                to_date=today,
-            )
-            if not isinstance(resp, dict) or not isinstance(resp.get("data"), dict):
-                raise ValueError("bad response")
-            data = resp["data"]
-            tss = data.get("timestamp", [])
-            ops = data.get("open",   [])
-            his = data.get("high",   [])
-            los = data.get("low",    [])
-            cls = data.get("close",  [])
-            vls = data.get("volume", [])
-            if not tss:
-                raise ValueError("empty")
-            bars = []
-            for i, ts in enumerate(tss):
-                bars.append({
-                    'ts':     int(ts),
-                    'open':   float(ops[i]),
-                    'high':   float(his[i]),
-                    'low':    float(los[i]),
-                    'close':  float(cls[i]),
-                    'volume': float(vls[i]) if i < len(vls) else 0.0,
-                })
-            bars.sort(key=lambda x: x['ts'])
-            # Persist today's bars so they survive after market close
-            cache = _load_cache(name)
-            cache[today] = bars
-            _save_cache(name, cache)
-            return bars
-        except Exception as e:
-            # API returned nothing (market closed, data unavailable) —
-            # fall back to today's bars from disk cache if we fetched them earlier.
-            cache = _load_cache(name)
-            cached = cache.get(today, [])
-            if cached:
-                logger.debug("Live fetch %s: API empty, using %d cached bars", name, len(cached))
-            return cached
-
-    def _process_symbol(self, sec: dict):
-        name  = sec["symbol"]
-        today = date.today().isoformat()
-        if _market_open():
-            bars_1m = self._fetch_today(sec)
-        else:
-            # Market closed — no new bars, use what bootstrap cached
-            bars_1m = _load_cache(name).get(today, [])
-        if not bars_1m:
-            return
-        # Drop the last bar — it may still be forming
-        if len(bars_1m) > 1:
-            bars_1m = bars_1m[:-1]
-
-        # Volume callback fires with ALL today's bars before the catchup filter
-        # so the leaderboard sees full-session cumulative volume, not just last 30 bars.
-        if self._on_volume is not None:
-            self._on_volume(name, bars_1m)
-
-        for tf in Config.TIMEFRAMES:
-            bars    = bars_1m if tf == 1 else _resample(bars_1m, tf)
-            last_ts = self._last_ts.get((name, tf), 0)
-            new_bars = [b for b in bars if b['ts'] > last_ts]
-            # On the very first poll (last_ts==0), skip back-history to avoid
-            # flooding the dashboard with stale alerts from earlier in the session.
-            if last_ts == 0 and len(new_bars) > Config.LIVE_CATCHUP_BARS:
-                new_bars = new_bars[-Config.LIVE_CATCHUP_BARS:]
-            for b in new_bars:
-                self._on_bar(name, tf, b)
-            if new_bars:
-                self._last_ts[(name, tf)] = new_bars[-1]['ts']
-
-    def _run_batch(self, batch: list[dict], label: str):
-        if not batch:
-            return
-        with ThreadPoolExecutor(max_workers=Config.MAX_WORKERS) as ex:
-            futs = [ex.submit(self._process_symbol, s) for s in batch if self._running]
-            for f in as_completed(futs):
-                try:
-                    f.result()
-                except Exception as e:
-                    logger.debug("Poll error [%s]: %s", label, e)
-
     def start(self):
-        self._running    = True
-        self._slow_idx   = 0   # rolling index into non-active symbols
+        self._running = True
 
         def _run():
-            logger.info("Live feed started (%d symbols, fast=%ds batch=%d).",
-                        len(self._symbols), _LIVE_POLL_INTERVAL, _SLOW_SCAN_BATCH)
+            logger.info("Live feed started (%d symbols, 5s bulk quote polling).", len(self._symbols))
             while self._running:
                 t0 = time.time()
+                
+                # Check for closed 1m bars
+                minute_ts = (int(time.time()) // 60) * 60
+                closed_keys = []
+                for symbol, bar in list(self._current_bar.items()):
+                    if bar and bar['ts'] < minute_ts:
+                        # Feed the closed bar to rollup engine
+                        self._aggregators[symbol].feed_historical(bar)
+                        closed_keys.append(symbol)
+                for symbol in closed_keys:
+                    self._current_bar[symbol] = None
+                
+                # Divide symbols into chunks of 100
+                chunks = list(_chunk_list(self._symbols, 100))
+                
+                def _fetch_chunk(chunk):
+                    securities = {"NSE_EQ": [int(s["security_id"]) for s in chunk]}
+                    _api_throttle()
+                    try:
+                        resp = self._client.quote_data(securities=securities)
+                        if isinstance(resp, dict) and resp.get("status") == "success":
+                            return resp.get("data", {})
+                    except Exception as e:
+                        logger.debug("Quote fetch error: %s", e)
+                    return {}
 
-                priority   = self._priority_fn() if self._priority_fn else set()
-                active     = [s for s in self._symbols if s['symbol'] in     priority]
-                non_active = [s for s in self._symbols if s['symbol'] not in priority]
-
-                # Always: fetch all active movers
-                self._run_batch(active, "active")
-
-                # Rolling window: 50 non-active symbols per cycle to detect new movers
-                if non_active:
-                    n   = len(non_active)
-                    idx = self._slow_idx % n
-                    end = idx + _SLOW_SCAN_BATCH
-                    if end <= n:
-                        slow_batch = non_active[idx:end]
+                all_data = {}
+                with ThreadPoolExecutor(max_workers=len(chunks) or 1) as ex:
+                    futs = [ex.submit(_fetch_chunk, c) for c in chunks]
+                    for f in as_completed(futs):
+                        res = f.result()
+                        if res:
+                            for seg, seg_data in res.items():
+                                all_data.setdefault(seg, {}).update(seg_data)
+                
+                # Process the fetched data
+                nse_eq_data = all_data.get("NSE_EQ", {})
+                for sec_id_str, quote in nse_eq_data.items():
+                    symbol = self._sec_id_to_symbol.get(sec_id_str)
+                    if not symbol:
+                        continue
+                    
+                    ltp = float(quote.get("last_price", quote.get("LTP", 0.0)))
+                    volume = float(quote.get("volume", 0.0))
+                    
+                    if ltp <= 0:
+                        continue
+                    
+                    # Fire quote callback to update daily metrics in real time
+                    if self._on_quote:
+                        self._on_quote(symbol, ltp, volume)
+                        
+                    # Aggregate 1m bar
+                    bar = self._current_bar.get(symbol)
+                    if bar is None or bar['ts'] != minute_ts:
+                        self._current_bar[symbol] = {
+                            'ts': minute_ts,
+                            'open': ltp,
+                            'high': ltp,
+                            'low': ltp,
+                            'close': ltp,
+                            'volume': 0.0,
+                            'volume_start': volume
+                        }
                     else:
-                        slow_batch = non_active[idx:] + non_active[:end - n]
-                    self._slow_idx = (idx + _SLOW_SCAN_BATCH) % n
-                    self._run_batch(slow_batch, "slow")
+                        bar['high'] = max(bar['high'], ltp)
+                        bar['low'] = min(bar['low'], ltp)
+                        bar['close'] = ltp
+                        bar['volume'] = max(volume - bar['volume_start'], 0.0)
 
                 elapsed = time.time() - t0
-                logger.info("Live poll done in %.1fs (active=%d slow_batch=%d).",
-                            elapsed, len(active), min(_SLOW_SCAN_BATCH, len(non_active)))
-                wait = max(0.0, _LIVE_POLL_INTERVAL - elapsed)
+                wait = max(0.0, 5.0 - elapsed)
                 if self._running and wait > 0:
                     time.sleep(wait)
 
@@ -519,3 +401,65 @@ class LiveFeed:
 
     def stop(self):
         self._running = False
+
+
+def fetch_today_1m_bars(client: dhanhq, symbols: list[dict]) -> dict[str, list[dict]]:
+    """Fetch today's 1-minute bars for all symbols in parallel (cached to disk)."""
+    logger.info("Fetching today's 1-minute bars for %d symbols...", len(symbols))
+    today = date.today().isoformat()
+    results = {}
+    
+    def _fetch_one(sec):
+        sym = sec['symbol']
+        # Check cache first
+        cache = _load_cache(sym)
+        if today in cache and len(cache[today]) > 0:
+            return sym, cache[today]
+            
+        _api_throttle()
+        try:
+            resp = client.intraday_minute_data(
+                security_id=sec["security_id"],
+                exchange_segment="NSE_EQ",
+                instrument_type="EQUITY",
+                from_date=today,
+                to_date=today,
+            )
+            if isinstance(resp, dict) and isinstance(resp.get("data"), dict):
+                data = resp["data"]
+                tss = data.get("timestamp", [])
+                ops = data.get("open",   [])
+                his = data.get("high",   [])
+                los = data.get("low",    [])
+                cls = data.get("close",  [])
+                vls = data.get("volume", [])
+                bars = []
+                for i, ts in enumerate(tss):
+                    bars.append({
+                        'ts':     int(ts),
+                        'open':   float(ops[i]),
+                        'high':   float(his[i]),
+                        'low':    float(los[i]),
+                        'close':  float(cls[i]),
+                        'volume': float(vls[i]) if i < len(vls) else 0.0,
+                    })
+                bars.sort(key=lambda x: x['ts'])
+                if bars:
+                    cache[today] = bars
+                    _save_cache(sym, cache)
+                return sym, bars
+        except Exception as e:
+            logger.debug("Failed to fetch today's bars for %s: %s", sym, e)
+        return sym, []
+
+    with ThreadPoolExecutor(max_workers=Config.MAX_WORKERS) as ex:
+        futs = {ex.submit(_fetch_one, s): s for s in symbols}
+        done = 0
+        for fut in as_completed(futs):
+            sym, bars = fut.result()
+            if bars:
+                results[sym] = bars
+            done += 1
+            if done % 50 == 0 or done == len(symbols):
+                logger.info("  Fetched bars for %d / %d symbols", done, len(symbols))
+    return results

@@ -50,7 +50,7 @@ cd "$WORK_DIR"
 echo "Starting Ross Pullback Scanner..."
 
 # Run in background, log to file
-nohup "$PYTHON" -u main.py >> "$LOGFILE" 2>&1 &
+nohup "$PYTHON" -u main.py "$@" >> "$LOGFILE" 2>&1 &
 PID=$!
 echo $PID > "$PIDFILE"
 

@@ -24,10 +24,9 @@ from datetime import date, datetime, timedelta
 from dhanhq import DhanContext
 
 from config import Config
-from indicators import IndicatorSet
-from strategy_engine import StrategyEngine, BarRecord, Alert
+from strategy_engine import Alert
 from universe import build_universe
-from dhan_feed import bootstrap, LiveFeed, _load_cache, _trading_days, _resample
+from dhan_feed import LiveFeed, _load_cache, _trading_days, _resample
 from alert_manager import AlertManager
 from rvol import RvolTracker
 from dashboard import create_app
@@ -41,6 +40,11 @@ logger = logging.getLogger(__name__)
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--replay', action='store_true', help="Replay today's session from 1m candles on startup")
+    args, unknown = parser.parse_known_args()
+
     errors = Config.validate()
     if errors:
         for e in errors:
@@ -285,17 +289,28 @@ def main():
         alerted_symbols.add(alert.symbol)
         alert_mgr.add(alert)
 
-    def on_volume_update(symbol: str, bars: list[dict]):
-        """Called by LiveFeed on every poll with ALL of today's closed 1m bars."""
-        total = sum(b.get('volume', 0.0) for b in bars)
-        today_volumes[symbol] = total
-        if bars:
-            if symbol not in today_bars:
-                today_bars[symbol] = deque(maxlen=10)
-            else:
-                today_bars[symbol].clear()
-            for b in bars[-10:]:
-                today_bars[symbol].append(b)
+    def on_quote_update(symbol: str, ltp: float, volume: float):
+        if not is_live:
+            return
+        today_volumes[symbol] = volume
+        
+        # Intraday OHLC
+        if symbol not in today_opens:
+            today_opens[symbol] = ltp
+        if ltp > today_highs.get(symbol, 0.0):
+            today_highs[symbol] = ltp
+        if symbol not in today_lows or ltp < today_lows[symbol]:
+            today_lows[symbol] = ltp
+
+        # Overnight change (live %, updated on each quote)
+        prev_c = prev_closes.get(symbol, 0.0)
+        if prev_c > 0:
+            overnight_chg[symbol] = round((ltp - prev_c) / prev_c * 100, 2)
+            
+        # Check if overnight change is >= 2.0%
+        # to qualify as a mover on the leaderboard
+        if overnight_chg[symbol] >= 2.0:
+            alerted_symbols.add(symbol)
 
     def on_bar(symbol: str, tf: int, bar):
         b      = bar if isinstance(bar, dict) else bar.__dict__
@@ -308,175 +323,109 @@ def main():
             open_p   = b.get('open', 0.0)
             close    = b.get('close', 0.0)
             bar_date = date.fromtimestamp(bar_ts)
-            is_active_bar = (bar_date == _active_date)
 
-            if is_active_bar:
-                # Volume accumulated bar-by-bar during live only;
-                # Phase 1 pre-populates from cache and on_volume_update refreshes it.
+            # Accumulate bar data
+            if symbol not in today_bars:
+                today_bars[symbol] = deque(maxlen=10)
+            today_bars[symbol].append(b)
+
+            # Intraday OHLC
+            if symbol not in today_opens:
+                today_opens[symbol] = open_p
+            if high > today_highs.get(symbol, 0.0):
+                today_highs[symbol] = high
+            if symbol not in today_lows or low < today_lows[symbol]:
+                today_lows[symbol] = low
+
+            # Overnight change
+            prev_c = prev_closes.get(symbol, 0.0)
+            if prev_c > 0 and close > 0:
+                overnight_chg[symbol] = round((close - prev_c) / prev_c * 100, 2)
+
+            # Bar range % vs open
+            ref = open_p if open_p > 0 else (low if low > 0 else 1.0)
+            bar_range_pct = (high - low) / ref * 100 if (high > low and ref > 0) else 0.0
+
+            # Momentum: best % range in any 1-5 consecutive bars
+            if symbol not in bar_history:
+                bar_history[symbol] = deque(maxlen=5)
+            bar_history[symbol].append({'open': open_p, 'high': high, 'low': low, 'ts': bar_ts})
+            hist = list(bar_history[symbol])
+            best_pct = 0.0
+            best_win = 1
+            for n in range(1, len(hist) + 1):
+                win = hist[-n:]
+                ref_o = win[0]['open']
+                if ref_o > 0:
+                    move = (max(w['high'] for w in win) - min(w['low'] for w in win)) / ref_o * 100
+                    if move > best_pct:
+                        best_pct = move
+                        best_win = n
+            if best_pct > peak_momentum.get(symbol, {}).get('pct', 0.0):
+                peak_momentum[symbol] = {'ts': bar_ts, 'pct': round(best_pct, 2), 'window': best_win}
+
+            # Any ≥3% move immediately qualifies symbol for Movers leaderboard
+            if best_pct >= 3.0:
+                alerted_symbols.add(symbol)
+
+            # Log momentum event in moves_log
+            if best_pct >= 3.0 and bar_ts - mom_last_fired.get(symbol, 0) >= 300:
+                mom_last_fired[symbol] = bar_ts
+                ev: dict = {
+                    'alert_type': 'MOM',
+                    'symbol':     symbol,
+                    'tf':         1,
+                    'pct':        round(best_pct, 2),
+                    'window':     best_win,
+                    'ts':         bar_ts,
+                    'time_ist':   _ist_time(bar_ts),
+                    'date_ist':   _ts_to_date(bar_ts),
+                    'today_volume': today_volumes.get(symbol, 0.0),
+                    '_key':       f"{symbol}:MOM:{bar_ts}",
+                }
                 if is_live:
-                    today_volumes[symbol] = today_volumes.get(symbol, 0.0) + vol
-                if symbol not in today_bars:
-                    today_bars[symbol] = deque(maxlen=10)
-                today_bars[symbol].append(b)
+                    now_ts = int(time.time())
+                    lag_s  = now_ts - (bar_ts + 60)
+                    ev['detected_at_ist'] = _ist_time(now_ts)
+                    ev['lag_s']           = lag_s
+                    logger.info('MOM %s %.2f%% bar=%s detected=%s lag=%ds',
+                                symbol, best_pct, _ist_time(bar_ts),
+                                _ist_time(now_ts), lag_s)
+                    if symbol not in moves_log:
+                        moves_log[symbol] = []
+                    if not any(m['ts'] == bar_ts for m in moves_log[symbol]):
+                        moves_log[symbol].append({'ts': bar_ts, 'pct': round(best_pct, 2), 'window': best_win})
 
-                # Intraday OHLC
-                if symbol not in today_opens:
-                    today_opens[symbol] = open_p
-                if high > today_highs.get(symbol, 0.0):
-                    today_highs[symbol] = high
-                if symbol not in today_lows or low < today_lows[symbol]:
-                    today_lows[symbol] = low
+            # Range speed: % of avg daily range covered and how fast
+            h_t = today_highs.get(symbol, 0.0)
+            l_t = today_lows.get(symbol, 0.0)
+            op_t = today_opens.get(symbol, open_p)
+            if op_t > 0 and h_t > l_t:
+                today_rng = (h_t - l_t) / op_t * 100
+                avg_dr    = avg_daily_ranges.get(symbol, 0.0)
+                if avg_dr > 0:
+                    coverage = round(today_rng / avg_dr * 100, 1)
+                    m_ist    = (bar_ts // 60 + 330) % (24 * 60)
+                    elapsed  = max(m_ist - 555, 1)
+                    existing_rs = range_speed.get(symbol)
+                    if existing_rs is None or coverage > existing_rs.get('coverage', 0.0):
+                        range_speed[symbol] = {'ts': bar_ts, 'coverage': coverage, 'elapsed_mins': elapsed}
 
-                # Overnight change (live %, updated each bar)
-                prev_c = prev_closes.get(symbol, 0.0)
-                if prev_c > 0 and close > 0:
-                    overnight_chg[symbol] = round((close - prev_c) / prev_c * 100, 2)
-
-                # Bar range % vs open
-                ref = open_p if open_p > 0 else (low if low > 0 else 1.0)
-                bar_range_pct = (high - low) / ref * 100 if (high > low and ref > 0) else 0.0
-
-                # Momentum: best % range in any 1-5 consecutive bars
-                if symbol not in bar_history:
-                    bar_history[symbol] = deque(maxlen=5)
-                bar_history[symbol].append({'open': open_p, 'high': high, 'low': low, 'ts': bar_ts})
-                hist = list(bar_history[symbol])
-                best_pct = 0.0
-                best_win = 1
-                for n in range(1, len(hist) + 1):
-                    win = hist[-n:]
-                    ref_o = win[0]['open']
-                    if ref_o > 0:
-                        move = (max(w['high'] for w in win) - min(w['low'] for w in win)) / ref_o * 100
-                        if move > best_pct:
-                            best_pct = move
-                            best_win = n
-                if best_pct > peak_momentum.get(symbol, {}).get('pct', 0.0):
-                    peak_momentum[symbol] = {'ts': bar_ts, 'pct': round(best_pct, 2), 'window': best_win}
-
-                # Any ≥3% move immediately qualifies symbol for Movers leaderboard
-                if best_pct >= 3.0:
-                    alerted_symbols.add(symbol)
-
-                # Fire a MOM alert (Alerts tab) at most once per 5 minutes per symbol
-                if best_pct >= 3.0 and bar_ts - mom_last_fired.get(symbol, 0) >= 300:
-                    mom_last_fired[symbol] = bar_ts
-                    ev: dict = {
-                        'alert_type': 'MOM',
-                        'symbol':     symbol,
-                        'tf':         1,
-                        'pct':        round(best_pct, 2),
-                        'window':     best_win,
-                        'ts':         bar_ts,
-                        'time_ist':   _ist_time(bar_ts),
-                        'date_ist':   _ts_to_date(bar_ts),
-                        'today_volume': today_volumes.get(symbol, 0.0),
-                        '_key':       f"{symbol}:MOM:{bar_ts}",
-                    }
-                    if is_live:
-                        now_ts = int(time.time())
-                        lag_s  = now_ts - (bar_ts + 60)
-                        ev['detected_at_ist'] = _ist_time(now_ts)
-                        ev['lag_s']           = lag_s
-                        logger.info('MOM %s %.2f%% bar=%s detected=%s lag=%ds',
-                                    symbol, best_pct, _ist_time(bar_ts),
-                                    _ist_time(now_ts), lag_s)
-                        if symbol not in moves_log:
-                            moves_log[symbol] = []
-                        if not any(m['ts'] == bar_ts for m in moves_log[symbol]):
-                            moves_log[symbol].append({'ts': bar_ts, 'pct': round(best_pct, 2), 'window': best_win})
-                    # MOM signals drive the Movers tab only — not the Alerts tab
-
-                # Dynamic mover activation during live feed
-                if (is_live
-                        and symbol not in active_symbols
-                        and best_pct >= Config.MOVER_MIN_PCT
-                        and today_volumes.get(symbol, 0.0) >= Config.MOVER_MIN_VOLUME):
-                    active_symbols.add(symbol)
-                    alerted_symbols.add(symbol)
-                    sec = _sym_lookup.get(symbol)
-                    if sec:
-                        threading.Thread(
-                            target=lambda s=sec: _bootstrap_new_mover(s),
-                            daemon=True, name=f'Mover-{symbol}',
-                        ).start()
-
-                # Range speed: % of avg daily range covered and how fast
-                h_t = today_highs.get(symbol, 0.0)
-                l_t = today_lows.get(symbol, 0.0)
-                op_t = today_opens.get(symbol, open_p)
-                if op_t > 0 and h_t > l_t:
-                    today_rng = (h_t - l_t) / op_t * 100
-                    avg_dr    = avg_daily_ranges.get(symbol, 0.0)
-                    if avg_dr > 0:
-                        coverage = round(today_rng / avg_dr * 100, 1)
-                        m_ist    = (bar_ts // 60 + 330) % (24 * 60)
-                        elapsed  = max(m_ist - 555, 1)
-                        existing_rs = range_speed.get(symbol)
-                        if existing_rs is None or coverage > existing_rs.get('coverage', 0.0):
-                            range_speed[symbol] = {'ts': bar_ts, 'coverage': coverage, 'elapsed_mins': elapsed}
-
-                # Consolidation break: current bar ≥3× avg of last 10 bars before it
-                if symbol not in rolling_bar_ranges:
-                    rolling_bar_ranges[symbol] = deque(maxlen=20)
-                rolling_bar_ranges[symbol].append(bar_range_pct)
-                rng_list = list(rolling_bar_ranges[symbol])
-                if len(rng_list) >= 8:
-                    prev_bars = rng_list[-min(11, len(rng_list)):-1]
-                    if len(prev_bars) >= 5:
-                        prev_avg = sum(prev_bars) / len(prev_bars)
-                        if prev_avg > 0 and bar_range_pct / prev_avg >= 3.0 and bar_range_pct >= 0.15:
-                            consol_breaks[symbol] = {
-                                'ts':    bar_ts,
-                                'ratio': round(bar_range_pct / prev_avg, 1),
-                                'pct':   round(bar_range_pct, 2),
-                            }
-
-            else:
-                # Historical bar — accumulate baselines during bootstrap
-                if not is_live:
-                    _bootstrap_prev_close[symbol] = close
-                    d_str    = str(bar_date)
-                    sym_days = _bootstrap_days.setdefault(symbol, {})
-                    if d_str not in sym_days:
-                        sym_days[d_str] = {'high': high, 'low': low, 'open': open_p}
-                    else:
-                        if high > sym_days[d_str]['high']: sym_days[d_str]['high'] = high
-                        if low  < sym_days[d_str]['low']:  sym_days[d_str]['low']  = low
-
-            # Feed RVOL tracker during bootstrap (used for bar_rvol in live mode)
-            tracker = rvol_trackers.get(symbol)
-            if tracker is not None and not is_live:
-                tracker.add_historical(bar_ts, vol, high, low, open_p)
-
-        # Only run MACD engine for movers; skip while history is being replayed
-        if symbol not in active_symbols or symbol in _bootstrapping:
-            return
-
-        key = (symbol, tf)
-        if key not in ind_sets:
-            ind_sets[key] = IndicatorSet()
-            engines[key]  = StrategyEngine(symbol, tf, on_alert)
-
-        vals = ind_sets[key].update(bar)
-        if vals is None:
-            return
-
-        if bar_ts < _strategy_cutoff:
-            return
-
-        rec = BarRecord(
-            ts=bar_ts,
-            open=b.get('open', 0.0), high=b.get('high', 0.0),
-            low=b.get('low', 0.0),   close=b.get('close', 0.0),
-            volume=b.get('volume', 0.0),
-            macd=vals['macd'], signal=vals['signal'],
-            ema50=vals['ema50'], rsi=vals['rsi'],
-        )
-        engines[key].update(rec)
-        # Track last bar fed to each engine so the live feed can pick up from here
-        if bar_ts > bootstrap_last_ts.get(key, 0):
-            bootstrap_last_ts[key] = bar_ts
+            # Consolidation break: current bar ≥3× avg of last 10 bars before it
+            if symbol not in rolling_bar_ranges:
+                rolling_bar_ranges[symbol] = deque(maxlen=20)
+            rolling_bar_ranges[symbol].append(bar_range_pct)
+            rng_list = list(rolling_bar_ranges[symbol])
+            if len(rng_list) >= 8:
+                prev_bars = rng_list[-min(11, len(rng_list)):-1]
+                if len(prev_bars) >= 5:
+                    prev_avg = sum(prev_bars) / len(prev_bars)
+                    if prev_avg > 0 and bar_range_pct / prev_avg >= 3.0 and bar_range_pct >= 0.15:
+                        consol_breaks[symbol] = {
+                            'ts':    bar_ts,
+                            'ratio': round(bar_range_pct / prev_avg, 1),
+                            'pct':   round(bar_range_pct, 2),
+                        }
 
     # ── dashboard ─────────────────────────────────────────────────────────────
     def get_debug() -> dict:
@@ -518,10 +467,19 @@ def main():
         sys.exit(1)
     logger.info('Universe: %d symbols', len(symbols))
 
-    avg_volumes.update({s['symbol']: s.get('avg_daily_volume', 0.0) for s in symbols})
-    _sym_lookup: dict[str, dict] = {s['symbol']: s for s in symbols}
-
-    rvol_trackers.update({s['symbol']: RvolTracker(s['symbol']) for s in symbols})
+    for s in symbols:
+        name = s['symbol']
+        avg_vol = s.get('avg_daily_volume', 0.0)
+        avg_volumes[name] = avg_vol
+        prev_closes[name] = s.get('close', 0.0)
+        avg_daily_ranges[name] = s.get('avg_daily_range', 0.0)
+        
+        # Populate RvolTracker with average Daily Volume scaled down to 1-minute slots
+        tracker = RvolTracker(name)
+        tracker.hist_mean = avg_vol / 375.0 if avg_vol > 0 else 1.0
+        tracker.hist_rng_mean = s.get('avg_daily_range', 0.0) / 375.0 if s.get('avg_daily_range', 0.0) > 0 else 0.1
+        tracker._ready = True
+        rvol_trackers[name] = tracker
 
     # ── shared today-bar scan (Phase 1 + Rescan button) ─────────────────────────
     def _scan_today_bars():
@@ -738,95 +696,62 @@ def main():
 
         logger.info('Backfill complete for all past days')
 
-    def _run_bootstrap():
-        nonlocal is_live
-        active_secs = [s for s in symbols if s['symbol'] in active_symbols]
-        logger.info('Phase 2: bootstrapping %d movers (≥%.0f%% move + ≥%.0fK shares)',
-                    len(active_secs), Config.MOVER_MIN_PCT, Config.MOVER_MIN_VOLUME / 1000)
-        try:
-            bootstrap(ctx, active_secs, on_bar)
-        except Exception as e:
-            logger.warning('Phase 2 bootstrap incomplete (%s) — continuing with partial indicator state', e)
-
-        for t in rvol_trackers.values():
-            t.finalize()
-        logger.info('RVOL baselines ready: %d symbols', len(rvol_trackers))
-
-        for sym, days in _bootstrap_days.items():
-            day_ranges = []
-            for d_data in days.values():
-                if d_data['open'] > 0 and d_data['high'] > d_data['low']:
-                    day_ranges.append((d_data['high'] - d_data['low']) / d_data['open'] * 100)
-            if day_ranges:
-                avg_daily_ranges[sym] = sum(day_ranges) / len(day_ranges)
-        _bootstrap_days.clear()
-        logger.info('Avg daily range baselines ready: %d symbols', len(avg_daily_ranges))
-
-        prev_closes.update(_bootstrap_prev_close)
-        _bootstrap_prev_close.clear()
-        logger.info('Prev closes ready: %d symbols', len(prev_closes))
-
-        missing = sum(1 for sym in rvol_trackers if avg_volumes.get(sym, 0) == 0)
-        if missing > 0:
-            logger.warning('avg_daily_volume=0 for %d/%d symbols — deriving from RVOL bootstrap data',
-                           missing, len(rvol_trackers))
-            for sym, tracker in rvol_trackers.items():
-                if avg_volumes.get(sym, 0) == 0 and tracker.hist_mean > 0:
-                    avg_volumes[sym] = tracker.hist_mean * 375
-
-        is_live = True
-        logger.info('Phase 2 complete — MACD alerts enabled, starting live feed')
-        _bootstrap_done.set()
-        threading.Thread(target=_backfill_history, daemon=True, name='BackfillHistory').start()
-
-    threading.Thread(target=_run_bootstrap, daemon=True, name='Phase2Bootstrap').start()
-    logger.info('Phase 2 bootstrap running in background — Movers tab live now')
-
-    # Block main thread until Phase 2 finishes; Flask serves Movers from Phase 1 data meanwhile
-    try:
-        while not _bootstrap_done.is_set():
-            _bootstrap_done.wait(timeout=1.0)
-    except KeyboardInterrupt:
-        logger.info('Shutting down during bootstrap...')
-        _save_state()
-        return
+    is_live = True
+    _bootstrap_done = threading.Event()
+    _bootstrap_done.set()
 
     # ── rescan (on-demand, reuses _scan_today_bars) ───────────────────────────
     def rescan_today() -> int:
-        before_active = set(active_symbols)
-        before        = set(alerted_symbols)
         _scan_today_bars()
-        new_movers = active_symbols - before_active
-        for name in new_movers:
-            sec = _sym_lookup.get(name)
-            if sec and name not in _bootstrapping:
-                threading.Thread(
-                    target=lambda s=sec: _bootstrap_new_mover(s),
-                    daemon=True, name=f'Mover-{name}',
-                ).start()
-        n_new = len(alerted_symbols - before)
-        _save_state()
-        logger.info('Rescan: %d new movers activated, %d new leaderboard symbols (total alerted: %d)',
-                    len(new_movers), n_new, len(alerted_symbols))
-        return n_new
+        return 0
 
     _rescan_ref['fn'] = rescan_today
 
     # ── live feed ─────────────────────────────────────────────────────────────
-    feed = LiveFeed(ctx, symbols, on_bar, on_volume_update,
-                    priority_fn=lambda: active_symbols)
-    feed._last_ts.update(bootstrap_last_ts)
-    logger.info('Live feed seeded with %d bootstrap timestamps', len(bootstrap_last_ts))
-    feed.start()
+    feed = LiveFeed(ctx, symbols, on_bar, on_quote_update)
+
+    if args.replay:
+        logger.info("Replay mode enabled. Fetching today's 1-minute bars...")
+        
+        # Download bars using client
+        from dhanhq import dhanhq
+        client = dhanhq(ctx)
+        
+        from dhan_feed import fetch_today_1m_bars
+        bars_map = fetch_today_1m_bars(client, symbols)
+        
+        # Flatten and sort chronologically
+        all_events = []
+        for sym, bars in bars_map.items():
+            for b in bars:
+                all_events.append((b['ts'], sym, b))
+        all_events.sort(key=lambda x: x[0])
+        
+        def _run_replay():
+            nonlocal is_live
+            is_live = True
+            logger.info("Starting replay of %d 1-minute bars...", len(all_events))
+            for ts, sym, bar in all_events:
+                # Update quote stats
+                on_quote_update(sym, bar['close'], bar['volume'])
+                # Process bar
+                on_bar(sym, 1, bar)
+                # Small sleep to yield
+                time.sleep(0.001)
+            logger.info("Replay complete! Transitioning to live polling...")
+            feed.start()
+            
+        threading.Thread(target=_run_replay, daemon=True, name="ReplayToday").start()
+    else:
+        feed.start()
 
     # ── heartbeat ─────────────────────────────────────────────────────────────
     try:
         while True:
             time.sleep(300)
             _save_state()
-            logger.info('Heartbeat — engines: %d (1m)  alerts: %d  leaderboard symbols: %d',
-                        len([k for k in engines if k[1] == 1]),
-                        len(alert_mgr.get_all()),
+            logger.info('Heartbeat — alerted symbols: %d  leaderboard: %d',
+                        len(alerted_symbols),
                         len(today_bars))
     except KeyboardInterrupt:
         logger.info('Shutting down...')

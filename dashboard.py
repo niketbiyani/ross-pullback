@@ -73,7 +73,7 @@ h1{font-size:15px;color:#60a5fa;letter-spacing:.5px}
 #hist-table tr:hover td{background:#0c1420}
 
 /* ── Alerts tab ───────────────────────────────────────────────────── */
-#tab-alerts{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#tab-alerts{flex:1;display:none;flex-direction:column;overflow:hidden}
 #filters{flex-shrink:0;padding:6px 16px;background:#0f172a;border-bottom:1px solid #1f2937;
          display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .scroller{flex:1;overflow-y:auto}
@@ -89,7 +89,7 @@ h1{font-size:15px;color:#60a5fa;letter-spacing:.5px}
 .WN{color:#94a3b8}.tf{color:#38bdf8}
 
 /* ── Rel Vol tab ──────────────────────────────────────────────────── */
-#tab-rvol{flex:1;display:none;flex-direction:column;overflow:hidden}
+#tab-rvol{flex:1;display:flex;flex-direction:column;overflow:hidden}
 #rvol-toolbar{flex-shrink:0;padding:6px 14px;background:#080d14;border-bottom:1px solid #1f2937;
               display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .lb-title{color:#60a5fa;font-size:11px;font-weight:bold;letter-spacing:.5px;text-transform:uppercase}
@@ -129,9 +129,9 @@ th.sort-on.asc::after{content:' ▲'}
 <header>
   <h1>Ross Pullback Scanner</h1>
   <span id="status">connecting…</span>
-  <div id="tabs">
-    <button class="tab-btn on" data-tab="alerts">Alerts</button>
-    <button class="tab-btn" data-tab="rvol">Movers</button>
+  <div id="tabs" style="display:none">
+    <button class="tab-btn" data-tab="alerts">Alerts</button>
+    <button class="tab-btn on" data-tab="rvol">Movers</button>
   </div>
   <span id="count"></span>
 </header>
@@ -196,12 +196,12 @@ th.sort-on.asc::after{content:' ▲'}
 <!-- ── Rel Vol tab ────────────────────────────────────────────────── -->
 <div id="tab-rvol">
 <div id="rvol-toolbar">
-  <span class="lb-title">Movers — alerted stocks only</span>
+  <span class="lb-title">Movers — Nifty 500 Leaderboard</span>
   <span class="fl" style="margin-left:12px">Vol ≥</span>
-  <input id="lb-vol-input" type="number" min="0" step="100" value="1000" class="num-in">
+  <input id="lb-vol-input" type="number" min="0" step="100" value="0" class="num-in">
   <span class="fl">K shares</span>
   <span class="fl" style="margin-left:12px">MOM ≥</span>
-  <input id="mom-input" type="number" min="0" step="0.5" value="3" class="num-in">
+  <input id="mom-input" type="number" min="0" step="0.5" value="2" class="num-in">
   <span class="fl">%</span>
   <span class="fl" style="margin-left:12px">Cum RVOL ≥</span>
   <input id="crvol-input" type="number" min="0" step="0.5" value="0" class="num-in">
@@ -249,7 +249,7 @@ th.sort-on.asc::after{content:' ▲'}
 /* ================================================================
    Tabs
    ================================================================ */
-let currentTab = 'alerts';
+let currentTab = 'rvol';
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     const tab = btn.dataset.tab;
@@ -321,8 +321,8 @@ let alertsDateFilter = _today;
 let rvolDateFilter   = _today;
 
 let lbData     = [];
-let lbMinVol   = 1000000;
-let lbMinMom   = 3;
+let lbMinVol   = 0;
+let lbMinMom   = 2;
 let lbMinRvol  = 0;
 let lbSortCol  = 'overnight_chg';
 let lbSortDir  = -1;
@@ -409,7 +409,7 @@ function fetchLeaderboard() {
     renderLeaderboard();
   }).catch(() => {});
 }
-setInterval(fetchLeaderboard, 15000);
+setInterval(fetchLeaderboard, 5000);
 
 document.getElementById('rvol-date').addEventListener('change', e => {
   rvolDateFilter = e.target.value || _today;
@@ -587,6 +587,7 @@ function mergeAlerts(incoming) {
   render();
 }
 fetch('./api/alerts').then(r => r.json()).then(d => { alerts = d; render(); });
+fetchLeaderboard();
 
 /* ================================================================
    Bootstrap banner — poll until is_live
@@ -624,6 +625,7 @@ function connectSSE() {
     alerts.unshift(JSON.parse(e.data));
     if (alerts.length > 5000) alerts.pop();
     render();
+    fetchLeaderboard();
   });
 }
 connectSSE();

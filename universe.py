@@ -126,9 +126,12 @@ def _download_bhavcopy(d: date, session: requests.Session) -> dict[str, dict]:
                                   row.get('TtlTrfVal') or 0)
                     close = float(row.get('CLOSE') or row.get('ClsPric') or
                                   row.get('LAST')  or row.get('LastPric') or 0)
+                    high  = float(row.get('HIGH')  or row.get('HghPric') or 0)
+                    low   = float(row.get('LOW')   or row.get('LwPric')  or 0)
+                    op    = float(row.get('OPEN')  or row.get('OpnPric') or 0)
                 except (ValueError, TypeError):
                     continue
-                result[sym] = {'volume': vol, 'turnover': val, 'close': close}
+                result[sym] = {'volume': vol, 'turnover': val, 'close': close, 'high': high, 'low': low, 'open': op}
             logger.info("  Bhavcopy %s: %d EQ symbols", d.isoformat(), len(result))
             return result
         except Exception as e:
@@ -162,10 +165,17 @@ def _build_via_bhavcopy() -> dict[str, dict] | None:
         if len(stats_list) < min_days:
             continue
         n = len(stats_list)
+        ranges = []
+        for s in stats_list:
+            if s['open'] > 0 and s['high'] > s['low']:
+                ranges.append((s['high'] - s['low']) / s['open'] * 100)
+        avg_range = sum(ranges) / len(ranges) if ranges else 0.0
+        
         result[sym] = {
             'avg_volume':   sum(s['volume']   for s in stats_list) / n,
             'avg_turnover': sum(s['turnover'] for s in stats_list) / n,
             'close':        stats_list[0].get('close', 0),   # most recent
+            'avg_range':    avg_range,
         }
     return result
 
@@ -242,13 +252,70 @@ def _build_via_dhan(dhan_context: DhanContext) -> dict[str, dict]:
     return result
 
 
+# ── Nifty 500 Constituents ───────────────────────────────────────────────────
+
+NIFTY500_URL = "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv"
+
+def _fetch_nifty500_symbols() -> set[str]:
+    """Download Nifty 500 constituents and return their symbols. Cache for 1 day."""
+    cache_path = os.path.join(os.path.dirname(Config.UNIVERSE_CACHE), "nifty500_cache.json")
+    today = date.today().isoformat()
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path) as f:
+                cached = json.load(f)
+            if cached.get("date") == today:
+                logger.info("Loaded %d Nifty 500 symbols from cache", len(cached["symbols"]))
+                return set(cached["symbols"])
+        except Exception:
+            pass
+
+    headers = {
+        'User-Agent': (
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/120.0.0.0 Safari/537.36'
+        ),
+        'Referer': 'https://www.niftyindices.com/'
+    }
+    logger.info("Downloading Nifty 500 constituents from %s", NIFTY500_URL)
+    try:
+        resp = requests.get(NIFTY500_URL, headers=headers, timeout=30)
+        resp.raise_for_status()
+        symbols = []
+        reader = csv.DictReader(io.StringIO(resp.text))
+        for row in reader:
+            sym = row.get("Symbol", "").strip()
+            if sym:
+                symbols.append(sym)
+        if symbols:
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            with open(cache_path, "w") as f:
+                json.dump({"date": today, "symbols": symbols}, f)
+            logger.info("Downloaded %d Nifty 500 symbols", len(symbols))
+            return set(symbols)
+    except Exception as e:
+        logger.error("Failed to download Nifty 500 list: %s", e)
+
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path) as f:
+                cached = json.load(f)
+            logger.warning("Using stale Nifty 500 cache from %s", cached.get("date"))
+            return set(cached["symbols"])
+        except Exception:
+            pass
+
+    return set()
+
+
 # ── main entry point ──────────────────────────────────────────────────────────
 
 def build_universe(dhan_context: DhanContext) -> list[dict]:
     """
     Return [{security_id, symbol, avg_daily_volume, avg_daily_turnover}].
-    Tries bhavcopy first, falls back to Dhan API, then stale cache.
-    Never returns empty — always produces a usable universe.
+    Tries bhavcopy first, falls back to stale cache to ensure instant startup.
+    Filters the universe to include only Nifty 500 constituents.
     """
     today = date.today().isoformat()
     cache = Config.UNIVERSE_CACHE
@@ -263,19 +330,29 @@ def build_universe(dhan_context: DhanContext) -> list[dict]:
         except Exception:
             pass
 
-    logger.info("Building universe via NSE bhavcopy (%d-day avg)...",
+    logger.info("Building Nifty 500 universe via NSE bhavcopy (%d-day avg)...",
                 Config.VOLUME_HISTORY_DAYS)
+
+    # ── fetch Nifty 500 list ──────────────────────────────────────────────────
+    n500 = _fetch_nifty500_symbols()
+    if not n500:
+        logger.error("Could not obtain Nifty 500 list. Cannot proceed.")
+        if os.path.exists(cache):
+            try:
+                with open(cache) as f:
+                    data = json.load(f)
+                logger.warning("Using stale universe cache from %s due to Nifty 500 fetch failure", data.get("date"))
+                return data["symbols"]
+            except Exception:
+                pass
+        return []
 
     # ── try bhavcopy ──────────────────────────────────────────────────────────
     sym_avg = _build_via_bhavcopy()
 
-    # ── fall back to Dhan API ─────────────────────────────────────────────────
-    if sym_avg is None:
-        sym_avg = _build_via_dhan(dhan_context)
-
     # ── still nothing → use stale cache (any age) ─────────────────────────────
     if not sym_avg:
-        logger.error("Both bhavcopy and Dhan API failed")
+        logger.error("Bhavcopy download failed")
         if os.path.exists(cache):
             try:
                 with open(cache) as f:
@@ -287,19 +364,21 @@ def build_universe(dhan_context: DhanContext) -> list[dict]:
         logger.error("No universe data available — aborting")
         return []
 
-    # ── apply filters ─────────────────────────────────────────────────────────
+    # ── apply filters & Nifty 500 check ───────────────────────────────────────
     use_price_filter  = Config.CLOSE_MIN_PRICE > 0
     use_vol_filter    = Config.TURNOVER_THRESHOLD > 0
 
     passing: set[str] = set()
     for sym, s in sym_avg.items():
+        if sym not in n500:
+            continue
         if use_price_filter and s['close'] > 0 and s['close'] < Config.CLOSE_MIN_PRICE:
             continue
         if use_vol_filter and s['avg_turnover'] > 0 and s['avg_turnover'] < Config.TURNOVER_THRESHOLD:
             continue
         passing.add(sym)
 
-    logger.info("Filters: close >= ₹%.0f, turnover >= ₹%.0fL → %d symbols pass",
+    logger.info("Filters: Nifty 500, close >= ₹%.0f, turnover >= ₹%.0fL → %d symbols pass",
                 Config.CLOSE_MIN_PRICE, Config.TURNOVER_THRESHOLD / 1e5, len(passing))
 
     # ── map to Dhan security IDs ──────────────────────────────────────────────
@@ -315,6 +394,8 @@ def build_universe(dhan_context: DhanContext) -> list[dict]:
             **s,
             'avg_daily_volume':   round(avg['avg_volume'],   0),
             'avg_daily_turnover': round(avg['avg_turnover'], 0),
+            'avg_daily_range':    round(avg['avg_range'], 2),
+            'close':              avg['close'],
         })
 
     missed = passing - {s['symbol'] for s in filtered}
