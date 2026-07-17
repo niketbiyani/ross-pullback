@@ -798,11 +798,23 @@ def main():
             nonlocal is_live
             is_live = True
             logger.info("Starting replay of %d 1-minute bars...", len(all_events))
+            
+            from datetime import timezone, timedelta
+            ist_tz = timezone(timedelta(hours=5, minutes=30))
+            today_str = date.today().isoformat()
+            
             for ts, sym, bar in all_events:
-                # Accumulate volume for today's total volume (intraday bars volume is per-bar)
-                current_vol = today_volumes.get(sym, 0.0) + bar['volume']
-                # Update quote stats (with cumulative volume!)
-                on_quote_update(sym, bar['close'], current_vol)
+                # Check if the bar's date is today (for quote updates/volume tracking)
+                bar_date = datetime.fromtimestamp(ts, tz=ist_tz).date().isoformat()
+                is_today_bar = (bar_date == today_str)
+                
+                if is_today_bar:
+                    # Accumulate volume for today's total volume (intraday bars volume is per-bar)
+                    current_vol = today_volumes.get(sym, 0.0) + bar['volume']
+                    today_volumes[sym] = current_vol
+                    # Update quote stats (with cumulative volume!)
+                    on_quote_update(sym, bar['close'], current_vol)
+                
                 # Feed bar to aggregator (which handles rollup and calls on_bar for 1m, 3m, 5m, 15m)
                 replay_aggregators[sym].feed_historical(bar)
                 # Small sleep to yield
