@@ -417,10 +417,10 @@ def main():
                 if symbol not in moves_log:
                     moves_log[symbol] = []
                 
-                # Check for active episode within 10 minutes of the last peak
+                # Check for active episode within 10 minutes of the last peak AND matching timeframe
                 active_ep = None
                 for ep in moves_log[symbol]:
-                    if abs(bar_ts - ep.get('peak_ts', ep['ts'])) <= 600:
+                    if ep.get('tf') == tf and abs(bar_ts - ep.get('peak_ts', ep['ts'])) <= 600:
                         active_ep = ep
                         break
                 
@@ -549,10 +549,10 @@ def main():
                     if name not in moves_log:
                         moves_log[name] = []
                     
-                    # Check for active episode within 10 minutes of the last peak
+                    # Check for active episode within 10 minutes of the last peak AND matching timeframe
                     active_ep = None
                     for ep in moves_log[name]:
-                        if abs(ts - ep.get('peak_ts', ep['ts'])) <= 600:
+                        if ep.get('tf') == 1 and abs(ts - ep.get('peak_ts', ep['ts'])) <= 600:
                             active_ep = ep
                             break
                     
