@@ -42,7 +42,7 @@ class Config:
 
     USE_TOTAL_MARKET_INDEX: bool = os.getenv("USE_TOTAL_MARKET_INDEX", "False").lower() in ("true", "1", "yes")
     
-    ENABLE_PULLBACKS: bool = os.getenv("ENABLE_PULLBACKS", "False").lower() in ("true", "1", "yes")
+    ENABLE_PULLBACKS: bool = os.getenv("ENABLE_PULLBACKS", "True").lower() in ("true", "1", "yes")
     
     # Custom symbols list to always include (comma-separated, e.g. "RESPONIND,FINOPB")
     ADDITIONAL_SYMBOLS: list[str] = [s.strip().upper() for s in os.getenv("ADDITIONAL_SYMBOLS", "").split(",") if s.strip()]

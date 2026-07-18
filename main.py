@@ -509,6 +509,63 @@ def main():
                     
                     # Add to alert manager so it persists and broadcasts to SSE
                     alert_mgr.add_event(rapid_evt)
+                    
+            # ── Micro Pullback Setup Alert ────────────────────────────────────
+            if Config.ENABLE_PULLBACKS and close < open_p:
+                key = (symbol, tf)
+                last_rapid = last_rapid_alerts.get(key)
+                if last_rapid is not None:
+                    bars_since = (bar_ts - last_rapid['ts']) // (60 * tf)
+                    if 1 <= bars_since <= 5:
+                        pb_key = f"PULLBACK:{symbol}:{tf}:{bar_ts}"
+                        
+                        today_vol = today_volumes.get(symbol, 0.0)
+                        avg_daily = avg_volumes.get(symbol, 0.0)
+                        
+                        if _active_date == date.today():
+                            now_ist_min  = (int(time.time()) // 60 + 330) % (24 * 60)
+                            elapsed_min  = min(max(now_ist_min - 555, 1), 375)
+                        else:
+                            elapsed_min = 375
+                        elapsed_frac = elapsed_min / 375.0
+                        rel_vol = round(today_vol / (avg_daily * elapsed_frac), 2) if (avg_daily > 0 and elapsed_frac > 0) else 0.0
+                        
+                        day_range_pct = 0.0
+                        op_t = today_opens.get(symbol, 0.0)
+                        if op_t > 0:
+                            h_t = today_highs.get(symbol, 0.0)
+                            l_t = today_lows.get(symbol, 0.0)
+                            if h_t > l_t > 0:
+                                day_range_pct = round((h_t - l_t) / op_t * 100, 2)
+                        
+                        pullback_evt = {
+                            'symbol':        symbol,
+                            'tf':            tf,
+                            'direction':     'LONG',
+                            'wave_num':      bars_since,
+                            'entry_price':   open_p,       # Trigger price is the Open of the red candle
+                            'sl_level':      low,          # Stop loss level is the Low of the red candle
+                            'sl_distance':   open_p - low,
+                            'sl_pct':        round((open_p - low) / open_p if open_p > 0 else 0.0, 4),
+                            'swing_level':   low,
+                            'rsi_at_entry':  0.0,
+                            'ema_clear':     True,
+                            'rsi_extreme':   True,
+                            'ema_clear_v2':  True,
+                            'rsi_extreme_v2':True,
+                            'ep_len_so_far': bars_since,
+                            'ts':            bar_ts,
+                            'type':          'pullback',   # Pullback setup alert type
+                            'today_volume':  today_vol,
+                            'rel_volume':    rel_vol,
+                            'day_range_pct': day_range_pct,
+                            'time_ist':      _ist_time(bar_ts),
+                            'date_ist':      _ts_to_date(bar_ts),
+                            'date_iso':      _ts_to_date_iso(bar_ts),
+                            'sl_pct_str':    f"{((open_p - low) / open_p * 100):.2f}%" if open_p > 0 else "0.00%",
+                            '_key':          pb_key
+                        }
+                        alert_mgr.add_event(pullback_evt)
 
             # Any ≥ MOVER_MIN_PCT move immediately qualifies symbol for Movers leaderboard
             if best_pct >= Config.MOVER_MIN_PCT:
