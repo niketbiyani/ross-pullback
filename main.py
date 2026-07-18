@@ -577,7 +577,7 @@ def main():
             # ── Micro Pullback Triggered Transition ───────────────────────────
             key = (symbol, tf)
             last_rapid = last_rapid_alerts.get(key)
-            if last_rapid is not None and last_rapid['status'] == 'PAUSE':
+            if last_rapid is not None and last_rapid['status'] == 'PAUSE' and last_rapid['event'].get('ts', 0) < bar_ts:
                 # Check if the current bar's high broke the trigger level (red bar open)
                 if high >= last_rapid.get('trigger_level', 999999.0):
                     last_rapid['status'] = 'TRIGGERED'
