@@ -207,12 +207,16 @@ def main():
         best_win = 1
         for n in range(1, len(hist) + 1):
             win = hist[-n:]
-            ref = win[0]['open']
-            if ref > 0:
-                move = (max(w['high'] for w in win) - min(w['low'] for w in win)) / ref * 100
-                if move > best_pct:
-                    best_pct = move
-                    best_win = n
+            if len(win) > 0:
+                low_idx = min(range(len(win)), key=lambda idx: win[idx]['low'])
+                high_idx = max(range(len(win)), key=lambda idx: win[idx]['high'])
+                if low_idx <= high_idx and high_idx == len(win) - 1:
+                    ref_p = win[low_idx]['low'] if win[low_idx]['low'] > 0 else win[0]['open']
+                    if ref_p > 0:
+                        move = (win[high_idx]['high'] - win[low_idx]['low']) / ref_p * 100
+                        if move > best_pct:
+                            best_pct = move
+                            best_win = n
 
         bar_date = date.fromtimestamp(bar_ts)
         if bar_date == _active_date:
@@ -575,12 +579,16 @@ def main():
                     best_win = 1
                     for n in range(1, len(hist) + 1):
                         win = hist[-n:]
-                        ref = win[0]['open']
-                        if ref > 0:
-                            move = (max(w['high'] for w in win) - min(w['low'] for w in win)) / ref * 100
-                            if move > best_pct:
-                                best_pct = move
-                                best_win = n
+                        if len(win) > 0:
+                            low_idx = min(range(len(win)), key=lambda idx: win[idx]['low'])
+                            high_idx = max(range(len(win)), key=lambda idx: win[idx]['high'])
+                            if low_idx <= high_idx and high_idx == len(win) - 1:
+                                ref_p = win[low_idx]['low'] if win[low_idx]['low'] > 0 else win[0]['open']
+                                if ref_p > 0:
+                                    move = (win[high_idx]['high'] - win[low_idx]['low']) / ref_p * 100
+                                    if move > best_pct:
+                                        best_pct = move
+                                        best_win = n
                     if best_pct > peak_momentum.get(name, {}).get('pct', 0.0):
                         peak_momentum[name] = {'ts': ts, 'pct': round(best_pct, 2), 'window': best_win, 'tf': tf_scan}
                     if best_pct >= FnoConfig.MOVER_MIN_PCT:
@@ -670,12 +678,16 @@ def main():
                         best_win = 1
                         for n in range(1, len(hist) + 1):
                             win = hist[-n:]
-                            ref = win[0]['open']
-                            if ref > 0:
-                                move = (max(w['high'] for w in win) - min(w['low'] for w in win)) / ref * 100
-                                if move > best_pct:
-                                    best_pct = move
-                                    best_win = n
+                            if len(win) > 0:
+                                low_idx = min(range(len(win)), key=lambda idx: win[idx]['low'])
+                                high_idx = max(range(len(win)), key=lambda idx: win[idx]['high'])
+                                if low_idx <= high_idx and high_idx == len(win) - 1:
+                                    ref_p = win[low_idx]['low'] if win[low_idx]['low'] > 0 else win[0]['open']
+                                    if ref_p > 0:
+                                        move = (win[high_idx]['high'] - win[low_idx]['low']) / ref_p * 100
+                                        if move > best_pct:
+                                            best_pct = move
+                                            best_win = n
                         if best_pct >= FnoConfig.MOVER_MIN_PCT and ts - mom_last_bf >= 300:
                             mom_last_bf = ts
                             alert_mgr.add_historical_event({

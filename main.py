@@ -415,15 +415,16 @@ def main():
             best_win = 1
             for n in range(1, len(hist) + 1):
                 win = hist[-n:]
-                ref_o = win[0]['open']
-                if ref_o > 0:
+                if len(win) > 0:
                     low_idx = min(range(len(win)), key=lambda idx: win[idx]['low'])
                     high_idx = max(range(len(win)), key=lambda idx: win[idx]['high'])
-                    if low_idx <= high_idx:
-                        move = (win[high_idx]['high'] - win[low_idx]['low']) / ref_o * 100
-                        if move > best_pct:
-                            best_pct = move
-                            best_win = n
+                    if low_idx <= high_idx and high_idx == len(win) - 1:
+                        ref_p = win[low_idx]['low'] if win[low_idx]['low'] > 0 else win[0]['open']
+                        if ref_p > 0:
+                            move = (win[high_idx]['high'] - win[low_idx]['low']) / ref_p * 100
+                            if move > best_pct:
+                                best_pct = move
+                                best_win = n
 
             # Peak momentum across all TFs
             if symbol not in peak_momentum:
@@ -633,13 +634,15 @@ def main():
                 hist = list(bh)
                 best_pct = 0.0; best_win = 1
                 for n in range(1, len(hist) + 1):
-                    win = hist[-n:]; ref = win[0]['open']
-                    if ref > 0:
+                    win = hist[-n:]
+                    if len(win) > 0:
                         low_idx = min(range(len(win)), key=lambda idx: win[idx]['low'])
                         high_idx = max(range(len(win)), key=lambda idx: win[idx]['high'])
-                        if low_idx <= high_idx:
-                            move = (win[high_idx]['high'] - win[low_idx]['low']) / ref * 100
-                            if move > best_pct: best_pct = move; best_win = n
+                        if low_idx <= high_idx and high_idx == len(win) - 1:
+                            ref_p = win[low_idx]['low'] if win[low_idx]['low'] > 0 else win[0]['open']
+                            if ref_p > 0:
+                                move = (win[high_idx]['high'] - win[low_idx]['low']) / ref_p * 100
+                                if move > best_pct: best_pct = move; best_win = n
                 if best_pct > peak_momentum.get(name, {}).get('pct', 0.0):
                     peak_momentum[name] = {'ts': ts, 'pct': round(best_pct, 2), 'window': best_win}
                 if best_pct >= Config.MOVER_MIN_PCT:
@@ -758,14 +761,15 @@ def main():
                     bar_best = 0.0; bar_win = 1
                     for n in range(1, len(hist) + 1):
                         win = hist[-n:]
-                        ref = win[0]['open']
-                        if ref > 0:
+                        if len(win) > 0:
                             low_idx = min(range(len(win)), key=lambda idx: win[idx]['low'])
                             high_idx = max(range(len(win)), key=lambda idx: win[idx]['high'])
-                            if low_idx <= high_idx:
-                                move = (win[high_idx]['high'] - win[low_idx]['low']) / ref * 100
-                                if move > bar_best:
-                                    bar_best = move; bar_win = n
+                            if low_idx <= high_idx and high_idx == len(win) - 1:
+                                ref_p = win[low_idx]['low'] if win[low_idx]['low'] > 0 else win[0]['open']
+                                if ref_p > 0:
+                                    move = (win[high_idx]['high'] - win[low_idx]['low']) / ref_p * 100
+                                    if move > bar_best:
+                                        bar_best = move; bar_win = n
                     if bar_best > best_pct:
                         best_pct = bar_best
                     if bar_best >= Config.MOVER_MIN_PCT and ts - mom_last_fired_bf.get(name, 0) >= 300:
