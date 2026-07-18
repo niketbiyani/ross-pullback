@@ -472,6 +472,8 @@ function createBaseChartConfig(width, height, showTimeScale) {
     },
     rightPriceScale: {
       borderColor: 'rgba(197, 203, 206, 0.4)',
+      autoScale: true,
+      width: 80,
     },
     timeScale: {
       borderColor: 'rgba(197, 203, 206, 0.4)',
@@ -1161,9 +1163,7 @@ function mergeAlerts(incoming) {
 fetch('./api/alerts').then(r => r.json()).then(d => { alerts = d; render(); });
 fetchLeaderboard();
 
-/* ================================================================
-   Bootstrap banner — poll until is_live
-   ================================================================ */
+let dateInitialized = false;
 function checkBootstrap() {
   fetch('./api/debug').then(r => r.json()).then(d => {
     const banner = document.getElementById('boot-banner');
@@ -1172,6 +1172,21 @@ function checkBootstrap() {
     } else {
       banner.style.display = 'block';
       setTimeout(checkBootstrap, 3000);
+    }
+    
+    if (d.active_date && !dateInitialized) {
+      dateInitialized = true;
+      const targetDate = d.active_date;
+      document.getElementById('alerts-date').value = targetDate;
+      document.getElementById('rvol-date').value   = targetDate;
+      if (document.getElementById('rapid-date')) {
+        document.getElementById('rapid-date').value = targetDate;
+      }
+      alertsDateFilter = targetDate;
+      rvolDateFilter   = targetDate;
+      rapidsDateFilter = targetDate;
+      render();
+      fetchLeaderboard();
     }
   }).catch(() => setTimeout(checkBootstrap, 5000));
 }
