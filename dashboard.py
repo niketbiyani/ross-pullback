@@ -445,6 +445,7 @@ let macdHistSeries = null;
 let currentSymbol = null;
 let currentTf = null;
 let isSyncing = false;
+let activeChartData = [];
 
 function changeChartTf(tf) {
   if (!currentSymbol) return;
@@ -606,8 +607,16 @@ function loadTVChart(symbol, tf) {
           } else {
             const otherSeries = getSeriesForChart(other);
             if (otherSeries) {
-              const fallbackPrice = other === chartRsi ? 50 : 0;
-              other.setCrosshairPosition(fallbackPrice, param.time, otherSeries);
+              let val = 0;
+              const bar = activeChartData.find(d => d.time === param.time);
+              if (bar) {
+                if (other === chartRsi) val = bar.rsi;
+                else if (other === chartMacd) val = bar.macd;
+                else if (other === chartMain) val = bar.close;
+              } else {
+                val = other === chartRsi ? 50 : 0;
+              }
+              other.setCrosshairPosition(val, param.time, otherSeries);
             }
           }
         }
@@ -640,6 +649,7 @@ function refreshActiveChart() {
     .then(r => r.json())
     .then(data => {
       if (data && data.length > 0) {
+        activeChartData = data;
         candleSeries.setData(data.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close })));
         ema20Series.setData(data.map(d => ({ time: d.time, value: d.ema20 })));
         ema50Series.setData(data.map(d => ({ time: d.time, value: d.ema50 })));
@@ -1018,7 +1028,7 @@ function okRapid(a) {
   const vt = parseFloat(FRapid.vol);
   if (vt > 0 && (a.today_volume || 0) > 0 && (a.today_volume || 0) < vt) return false;
   const mt = parseFloat(FRapid.mom);
-  const pct = a.peak_mom_pct || 0.0;
+  const pct = a.peak_mom_pct || a.pct || 0.0;
   if (mt > 0 && pct < mt) return false;
   return true;
 }

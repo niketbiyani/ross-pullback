@@ -81,6 +81,17 @@ def main():
     if _active_date != date.today():
         logger.info('Dry-run mode — replaying %s (today is %s)', _active_date, date.today())
 
+    def get_previous_close(symbol: str, active_date: date) -> float:
+        """Find the close price of the last bar before active_date."""
+        cache = _load_cache(symbol)
+        past_dates = sorted([d for d in cache.keys() if d < active_date.isoformat()])
+        if past_dates:
+            last_day_bars = cache.get(past_dates[-1], [])
+            if last_day_bars:
+                last_bar = max(last_day_bars, key=lambda b: b.get('ts', 0))
+                return last_bar.get('close', 0.0)
+        return prev_closes.get(symbol, 0.0)
+
     _state_file = os.path.join(_here, f"movers_{_active_date}.json")
 
     # Today's intraday volume (cumulative shares) — used for MACD alert rel_volume
@@ -309,6 +320,9 @@ def main():
 
         # Overnight change (live %, updated on each quote)
         prev_c = prev_closes.get(symbol, 0.0)
+        if prev_c == 0.0:
+            prev_c = get_previous_close(symbol, _active_date)
+            prev_closes[symbol] = prev_c
         if prev_c > 0:
             overnight_chg[symbol] = round((ltp - prev_c) / prev_c * 100, 2)
             
@@ -365,6 +379,9 @@ def main():
 
                 # Overnight change
                 prev_c = prev_closes.get(symbol, 0.0)
+                if prev_c == 0.0:
+                    prev_c = get_previous_close(symbol, _active_date)
+                    prev_closes[symbol] = prev_c
                 if prev_c > 0 and close > 0:
                     overnight_chg[symbol] = round((close - prev_c) / prev_c * 100, 2)
 
@@ -491,6 +508,7 @@ def main():
                         'ep_len_so_far': best_win,
                         'ts':            bar_ts,
                         'type':          'rapid',  # identifies as rapid momentum alert
+                        'pct':           round(best_pct, 2),
                         'status':        'SPIKING',
                         'today_volume':  today_vol,
                         'rel_volume':    rel_vol,
@@ -741,6 +759,9 @@ def main():
             if t_low   < float('inf') and t_low > 0: today_lows[name] = t_low
             if t_open  > 0 and name not in today_opens: today_opens[name] = t_open
             prev_c = prev_closes.get(name, 0.0)
+            if prev_c == 0.0:
+                prev_c = get_previous_close(name, _active_date)
+                prev_closes[name] = prev_c
             if prev_c > 0 and t_close > 0:
                 overnight_chg[name] = round((t_close - prev_c) / prev_c * 100, 2)
 
