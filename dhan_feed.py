@@ -27,7 +27,7 @@ _SLOW_SCAN_BATCH     = 50   # non-active symbols polled per cycle (rolling windo
 # so 32 workers don't flood Dhan's rate limits.
 _API_LOCK    = threading.Lock()
 _API_LAST: float = 0.0
-_MIN_API_GAP = 0.10   # 10 req·s⁻¹ — safe headroom below Dhan's limit
+_MIN_API_GAP = 2.5   # 2.5s gap = 24 req·min⁻¹ — safe headroom below Dhan's limit of 25 req·min⁻¹
 
 
 def _api_throttle():
