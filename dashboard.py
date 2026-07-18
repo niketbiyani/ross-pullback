@@ -627,6 +627,8 @@ function loadTVChart(symbol, tf) {
     });
   });
   
+  let lastObservedWidth = 0;
+  let lastObservedHeights = { main: 0, rsi: 0, macd: 0 };
   const resizeObserver = new ResizeObserver(entries => {
     for (let entry of entries) {
       const { width } = entry.contentRect;
@@ -634,9 +636,17 @@ function loadTVChart(symbol, tf) {
         const mH = mainDiv.clientHeight;
         const rH = rsiDiv.clientHeight;
         const mcH = macdDiv.clientHeight;
-        if (chartMain && mH > 0) chartMain.resize(width, mH);
-        if (chartRsi && rH > 0) chartRsi.resize(width, rH);
-        if (chartMacd && mcH > 0) chartMacd.resize(width, mcH);
+        const sizeChanged = width !== lastObservedWidth || 
+                            mH !== lastObservedHeights.main || 
+                            rH !== lastObservedHeights.rsi || 
+                            mcH !== lastObservedHeights.macd;
+        if (sizeChanged) {
+          lastObservedWidth = width;
+          lastObservedHeights = { main: mH, rsi: rH, macd: mcH };
+          if (chartMain && mH > 0) chartMain.resize(width, mH);
+          if (chartRsi && rH > 0) chartRsi.resize(width, rH);
+          if (chartMacd && mcH > 0) chartMacd.resize(width, mcH);
+        }
       }
     }
   });
