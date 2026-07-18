@@ -1100,7 +1100,7 @@ function renderRapids() {
   const rawRows = alerts.filter(okRapid);
   const grouped = {};
   rawRows.forEach(a => {
-    const k = a.symbol + ':' + a.tf;
+    const k = a.symbol + ':' + a.tf + ':' + (a.breakout_ts || a.ts);
     if (!grouped[k]) {
       grouped[k] = {
         latest: a,

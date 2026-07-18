@@ -508,6 +508,8 @@ def main():
                         'ep_len_so_far': best_win,
                         'ts':            bar_ts,
                         'type':          'rapid',  # identifies as rapid momentum alert
+                        'breakout_ts':   bar_ts,
+                        'breakout_time_ist': _ist_time(bar_ts),
                         'pct':           round(best_pct, 2),
                         'status':        'SPIKING',
                         'today_volume':  today_vol,
