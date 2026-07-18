@@ -359,7 +359,7 @@ def main():
                     bar_history[symbol] = {}
                 if tf not in bar_history[symbol]:
                     bar_history[symbol][tf] = deque(maxlen=5)
-                bar_history[symbol][tf].append({'open': open_p, 'high': high, 'low': low, 'ts': bar_ts})
+                bar_history[symbol][tf].append({'open': open_p, 'high': high, 'low': low, 'close': close, 'ts': bar_ts})
                 return
 
             if tf == 1:
@@ -425,7 +425,7 @@ def main():
                 bar_history[symbol] = {}
             if tf not in bar_history[symbol]:
                 bar_history[symbol][tf] = deque(maxlen=5)
-            bar_history[symbol][tf].append({'open': open_p, 'high': high, 'low': low, 'ts': bar_ts})
+            bar_history[symbol][tf].append({'open': open_p, 'high': high, 'low': low, 'close': close, 'ts': bar_ts})
             hist = list(bar_history[symbol][tf])
             
             best_pct = 0.0
@@ -528,8 +528,8 @@ def main():
                     }
                     alert_mgr.add_event(rapid_evt)
 
-            # ── Micro Pullback Pause Transition ───────────────────────────────
-            if close < open_p:
+            prev_c = hist[-2].get('close', open_p) if len(hist) >= 2 else open_p
+            if close < open_p or close < prev_c:
                 key = (symbol, tf)
                 last_rapid = last_rapid_alerts.get(key)
                 if last_rapid is not None and last_rapid['status'] == 'SPIKING':

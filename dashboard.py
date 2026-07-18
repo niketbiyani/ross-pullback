@@ -579,12 +579,12 @@ function loadTVChart(symbol, tf) {
   // Sync Time Scales (zoom / scroll)
   const charts = [chartMain, chartRsi, chartMacd];
   charts.forEach((chart, idx, arr) => {
-    chart.timeScale().subscribeVisibleTimeRangeChange(range => {
+    chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
       if (isSyncing || !range) return;
       isSyncing = true;
       arr.forEach(other => {
         if (other !== chart) {
-          other.timeScale().setVisibleRange(range);
+          other.timeScale().setVisibleLogicalRange(range);
         }
       });
       isSyncing = false;
@@ -1101,12 +1101,31 @@ function renderRapids() {
   const grouped = {};
   rawRows.forEach(a => {
     const k = a.symbol + ':' + a.tf;
-    if (!grouped[k] || a.ts > grouped[k].ts) {
-      grouped[k] = a;
+    if (!grouped[k]) {
+      grouped[k] = {
+        latest: a,
+        earliest_time_ist: a.time_ist,
+        earliest_ts: a.ts
+      };
+    } else {
+      if (a.ts > grouped[k].latest.ts) {
+        grouped[k].latest = a;
+      }
+      if (a.ts < grouped[k].earliest_ts) {
+        grouped[k].earliest_ts = a.ts;
+        grouped[k].earliest_time_ist = a.time_ist;
+      }
     }
   });
   
-  const rows = applySort(Object.values(grouped), rapidSortCol, rapidSortDir);
+  const processedRows = Object.values(grouped).map(g => {
+    return {
+      ...g.latest,
+      breakout_time_ist: g.earliest_time_ist
+    };
+  });
+  
+  const rows = applySort(processedRows, rapidSortCol, rapidSortDir);
   
   document.getElementById('rapid-tb').innerHTML = rows.map((a, i) => {
     const momBadge = `<span style="color:#facc15;font-weight:bold">${(a.peak_mom_pct || a.pct || 0.0).toFixed(2)}%</span>`
@@ -1133,7 +1152,7 @@ function renderRapids() {
                    
     return `<tr class="${i<3?'new':''}" data-sym="${a.symbol}" data-tf="${a.tf}" style="cursor:pointer">
       <td style="color:#4b5563">${a.date_ist||''}</td>
-      <td>${a.time_ist}</td>
+      <td>${a.breakout_time_ist || a.time_ist}</td>
       <td><b>${a.symbol}</b></td>
       <td class="tf">${a.tf}m</td>
       <td>${a.entry_price ? a.entry_price.toFixed(2) : (a.price ? a.price.toFixed(2) : '')}</td>
