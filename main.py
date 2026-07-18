@@ -438,7 +438,7 @@ def main():
                     'tf': tf
                 }
 
-            # ── Rapid Momentum Alert (No MACD logic) ──────────────────────────
+            # ── Rapid Momentum Alert (Option A state machine) ─────────────────
             if best_pct >= Config.RAPID_MIN_PCT:
                 key = (symbol, tf)
                 last_alert = last_rapid_alerts.get(key)
@@ -454,20 +454,15 @@ def main():
                         should_alert = True
                 
                 if should_alert:
-                    last_rapid_alerts[key] = {'ts': bar_ts, 'pct': best_pct}
-                    
                     # Compute relative volume & day range
                     today_vol = today_volumes.get(symbol, 0.0)
                     avg_daily = avg_volumes.get(symbol, 0.0)
-                    
-                    # Use the active trading date's wall-clock position for elapsed calc
                     if _active_date == date.today():
                         now_ist_min  = (int(time.time()) // 60 + 330) % (24 * 60)
                         elapsed_min  = min(max(now_ist_min - 555, 1), 375)
                     else:
                         elapsed_min = 375
                     elapsed_frac = elapsed_min / 375.0
-                    
                     rel_vol = round(today_vol / (avg_daily * elapsed_frac), 2) if (avg_daily > 0 and elapsed_frac > 0) else 0.0
                     
                     day_range_pct = 0.0
@@ -478,7 +473,6 @@ def main():
                         if h_t > l_t > 0:
                             day_range_pct = round((h_t - l_t) / op_t * 100, 2)
                     
-                    # Generate alert event dictionary
                     rapid_evt = {
                         'symbol':        symbol,
                         'tf':            tf,
@@ -497,6 +491,7 @@ def main():
                         'ep_len_so_far': best_win,
                         'ts':            bar_ts,
                         'type':          'rapid',  # identifies as rapid momentum alert
+                        'status':        'SPIKING',
                         'today_volume':  today_vol,
                         'rel_volume':    rel_vol,
                         'day_range_pct': day_range_pct,
@@ -507,21 +502,26 @@ def main():
                         '_key':          f"RAPID:{symbol}:{tf}:{bar_ts}:{best_pct:.2f}"
                     }
                     
-                    # Add to alert manager so it persists and broadcasts to SSE
+                    last_rapid_alerts[key] = {
+                        'ts': bar_ts,
+                        'pct': best_pct,
+                        'status': 'SPIKING',
+                        'event': rapid_evt
+                    }
                     alert_mgr.add_event(rapid_evt)
-                    
-            # ── Micro Pullback Setup Alert ────────────────────────────────────
-            if Config.ENABLE_PULLBACKS and close < open_p:
+
+            # ── Micro Pullback Pause Transition ───────────────────────────────
+            if close < open_p:
                 key = (symbol, tf)
                 last_rapid = last_rapid_alerts.get(key)
-                if last_rapid is not None:
+                if last_rapid is not None and last_rapid['status'] == 'SPIKING':
                     bars_since = (bar_ts - last_rapid['ts']) // (60 * tf)
                     if 1 <= bars_since <= 5:
-                        pb_key = f"PULLBACK:{symbol}:{tf}:{bar_ts}"
+                        last_rapid['status'] = 'PAUSE'
+                        last_rapid['trigger_level'] = open_p
                         
                         today_vol = today_volumes.get(symbol, 0.0)
                         avg_daily = avg_volumes.get(symbol, 0.0)
-                        
                         if _active_date == date.today():
                             now_ist_min  = (int(time.time()) // 60 + 330) % (24 * 60)
                             elapsed_min  = min(max(now_ist_min - 555, 1), 375)
@@ -538,34 +538,41 @@ def main():
                             if h_t > l_t > 0:
                                 day_range_pct = round((h_t - l_t) / op_t * 100, 2)
                         
-                        pullback_evt = {
-                            'symbol':        symbol,
-                            'tf':            tf,
-                            'direction':     'LONG',
-                            'wave_num':      bars_since,
-                            'entry_price':   open_p,       # Trigger price is the Open of the red candle
+                        pause_evt = {
+                            **last_rapid['event'],
+                            'ts':            bar_ts,
+                            'time_ist':      _ist_time(bar_ts),
+                            'status':        'PAUSE',
+                            'entry_price':   open_p,       # Entry Trigger level is the Open of the red candle
                             'sl_level':      low,          # Stop loss level is the Low of the red candle
                             'sl_distance':   open_p - low,
                             'sl_pct':        round((open_p - low) / open_p if open_p > 0 else 0.0, 4),
-                            'swing_level':   low,
-                            'rsi_at_entry':  0.0,
-                            'ema_clear':     True,
-                            'rsi_extreme':   True,
-                            'ema_clear_v2':  True,
-                            'rsi_extreme_v2':True,
-                            'ep_len_so_far': bars_since,
-                            'ts':            bar_ts,
-                            'type':          'pullback',   # Pullback setup alert type
+                            'sl_pct_str':    f"{((open_p - low) / open_p * 100):.2f}%" if open_p > 0 else "0.00%",
                             'today_volume':  today_vol,
                             'rel_volume':    rel_vol,
                             'day_range_pct': day_range_pct,
-                            'time_ist':      _ist_time(bar_ts),
-                            'date_ist':      _ts_to_date(bar_ts),
-                            'date_iso':      _ts_to_date_iso(bar_ts),
-                            'sl_pct_str':    f"{((open_p - low) / open_p * 100):.2f}%" if open_p > 0 else "0.00%",
-                            '_key':          pb_key
+                            '_key':          f"RAPID_PAUSE:{symbol}:{tf}:{bar_ts}"
                         }
-                        alert_mgr.add_event(pullback_evt)
+                        last_rapid['event'] = pause_evt
+                        alert_mgr.add_event(pause_evt)
+
+            # ── Micro Pullback Triggered Transition ───────────────────────────
+            key = (symbol, tf)
+            last_rapid = last_rapid_alerts.get(key)
+            if last_rapid is not None and last_rapid['status'] == 'PAUSE':
+                # Check if the current bar's high broke the trigger level (red bar open)
+                if high >= last_rapid.get('trigger_level', 999999.0):
+                    last_rapid['status'] = 'TRIGGERED'
+                    
+                    triggered_evt = {
+                        **last_rapid['event'],
+                        'ts':            bar_ts,
+                        'time_ist':      _ist_time(bar_ts),
+                        'status':        'TRIGGERED',
+                        '_key':          f"RAPID_TRIG:{symbol}:{tf}:{bar_ts}"
+                    }
+                    last_rapid['event'] = triggered_evt
+                    alert_mgr.add_event(triggered_evt)
 
             # Any ≥ MOVER_MIN_PCT move immediately qualifies symbol for Movers leaderboard
             if best_pct >= Config.MOVER_MIN_PCT:

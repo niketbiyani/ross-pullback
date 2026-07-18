@@ -151,7 +151,7 @@ th.sort-on.asc::after{content:' ▲'}
       <span style="color:#60a5fa;font-size:11px;font-weight:bold;letter-spacing:.5px;text-transform:uppercase">Scanner</span>
       <div id="tabs" style="display:flex;gap:4px;margin-left:auto">
         <button class="tab-btn on" data-tab="rvol">Movers</button>
-        <button class="tab-btn" data-tab="pullback">Pullback Alerts</button>
+        <button class="tab-btn" data-tab="pullback" style="display:none">Pullback Alerts</button>
         <button class="tab-btn" data-tab="rapid">Rapid Momentum</button>
       </div>
     </div>
@@ -283,6 +283,8 @@ th.sort-on.asc::after{content:' ▲'}
           <th class="sortable" data-tbl="rapid" data-col="entry_price" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">Price</th>
           <th class="sortable" data-tbl="rapid" data-col="today_volume" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">Volume</th>
           <th class="sortable" data-tbl="rapid" data-col="peak_mom_pct" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">MOM Move</th>
+          <th class="sortable" data-tbl="rapid" data-col="status" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">Status</th>
+          <th style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #0f172a;white-space:nowrap;font-size:10px">Setup (Entry / SL)</th>
         </tr></thead>
         <tbody id="rapid-tb"></tbody>
         </table>
@@ -1072,20 +1074,51 @@ function renderRapids() {
   const scroller = document.querySelector('#panel-rapid .scroller');
   if (!scroller) return;
   const savedTop = scroller.scrollTop;
-  const rows = applySort(alerts.filter(okRapid), rapidSortCol, rapidSortDir);
+  
+  const rawRows = alerts.filter(okRapid);
+  const grouped = {};
+  rawRows.forEach(a => {
+    const k = a.symbol + ':' + a.tf;
+    if (!grouped[k] || a.ts > grouped[k].ts) {
+      grouped[k] = a;
+    }
+  });
+  
+  const rows = applySort(Object.values(grouped), rapidSortCol, rapidSortDir);
   
   document.getElementById('rapid-tb').innerHTML = rows.map((a, i) => {
-    const momBadge = `<span style="color:#facc15;font-weight:bold">${(a.peak_mom_pct || 0.0).toFixed(2)}%</span>`
+    const momBadge = `<span style="color:#facc15;font-weight:bold">${(a.peak_mom_pct || a.pct || 0.0).toFixed(2)}%</span>`
                    + `<span style="color:#4b5563;font-size:10px;margin-left:4px">${a.ep_len_so_far || 0}b</span>`;
+                   
+    let statusHtml = '';
+    const st = a.status || 'SPIKING';
+    if (st === 'PAUSE') {
+      statusHtml = `<span style="background:#78350f;color:#fbbf24;padding:2px 6px;border-radius:3px;font-weight:bold;font-size:10px">PAUSE</span>`;
+    } else if (st === 'TRIGGERED') {
+      statusHtml = `<span style="background:#064e3b;color:#34d399;padding:2px 6px;border-radius:3px;font-weight:bold;font-size:10px">TRIGGERED</span>`;
+    } else {
+      statusHtml = `<span style="background:#064e3b;color:#60a5fa;padding:2px 6px;border-radius:3px;font-weight:bold;font-size:10px">SPIKING</span>`;
+    }
+    
+    let setupHtml = '';
+    if (st === 'PAUSE' && a.entry_price && a.sl_level) {
+      setupHtml = `<span style="color:#e2e8f0">Trigger: <b>${a.entry_price.toFixed(2)}</b></span><span style="color:#64748b;margin-left:6px;font-size:11px">SL: ${a.sl_level.toFixed(2)}</span>`;
+    } else if (st === 'TRIGGERED') {
+      setupHtml = `<span style="color:#34d399;font-weight:bold">Trigger Crossed!</span>`;
+    } else {
+      setupHtml = `<span style="color:#4b5563">-</span>`;
+    }
                    
     return `<tr class="${i<3?'new':''}" data-sym="${a.symbol}" data-tf="${a.tf}" style="cursor:pointer">
       <td style="color:#4b5563">${a.date_ist||''}</td>
       <td>${a.time_ist}</td>
       <td><b>${a.symbol}</b></td>
       <td class="tf">${a.tf}m</td>
-      <td>${a.entry_price.toFixed(2)}</td>
+      <td>${a.entry_price ? a.entry_price.toFixed(2) : (a.price ? a.price.toFixed(2) : '')}</td>
       <td>${volBadge(a)}</td>
       <td>${momBadge}</td>
+      <td>${statusHtml}</td>
+      <td>${setupHtml}</td>
     </tr>`;
   }).join('');
   
