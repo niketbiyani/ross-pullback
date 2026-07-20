@@ -338,7 +338,6 @@ class LiveFeed:
                 
                 def _fetch_chunk(chunk):
                     securities = {"NSE_EQ": [int(s["security_id"]) for s in chunk]}
-                    _api_throttle()
                     try:
                         resp = self._client.quote_data(securities=securities)
                         if isinstance(resp, dict) and resp.get("status") == "success":

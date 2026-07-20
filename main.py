@@ -1002,7 +1002,47 @@ def main():
             
         threading.Thread(target=_run_replay, daemon=True, name="ReplayToday").start()
     else:
-        feed.start()
+        def _run_live_catchup():
+            try:
+                from dhanhq import dhanhq
+                client = dhanhq(ctx)
+                from dhan_feed import fetch_today_1m_bars
+                bars_map = fetch_today_1m_bars(client, symbols, n_days=1)
+                
+                all_events = []
+                for sym, bars in bars_map.items():
+                    for b in bars:
+                        all_events.append((b['ts'], sym, b))
+                all_events.sort(key=lambda x: x[0])
+                
+                if all_events:
+                    logger.info("Catching up on %d intraday bars from this morning...", len(all_events))
+                    from bar_aggregator import BarAggregator
+                    catchup_aggs = {s['symbol']: BarAggregator(s['symbol'], on_bar) for s in symbols}
+                    
+                    from datetime import timezone, timedelta
+                    ist_tz = timezone(timedelta(hours=5, minutes=30))
+                    today_str = _active_date.isoformat()
+                    
+                    for ts, sym, bar in all_events:
+                        bar_date = datetime.fromtimestamp(ts, tz=ist_tz).date().isoformat()
+                        if bar_date == today_str:
+                            current_vol = today_volumes.get(sym, 0.0) + bar['volume']
+                            today_volumes[sym] = current_vol
+                            on_quote_update(sym, bar['close'], current_vol)
+                            catchup_aggs[sym].feed_historical(bar)
+                            
+                    for sym, agg in catchup_aggs.items():
+                        for tf, cur in list(agg._bars.items()):
+                            if cur:
+                                on_bar(sym, tf, cur)
+                                
+                    logger.info("Morning catchup complete! Streaming live updates...")
+            except Exception as e:
+                logger.error("Error during live morning catchup: %s", e)
+            feed.start()
+            
+        threading.Thread(target=_run_live_catchup, daemon=True, name="LiveCatchup").start()
 
     # ── heartbeat ─────────────────────────────────────────────────────────────
     try:
