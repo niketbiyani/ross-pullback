@@ -324,8 +324,8 @@ def build_universe(dhan_context: DhanContext) -> list[dict]:
         try:
             with open(cache) as f:
                 data = json.load(f)
-            if data.get("date") == today:
-                logger.info("Universe: %d symbols (from cache)", len(data["symbols"]))
+            if data.get("symbols"):
+                logger.info("Universe: %d symbols (from cache dated %s)", len(data["symbols"]), data.get("date"))
                 return data["symbols"]
         except Exception:
             pass
