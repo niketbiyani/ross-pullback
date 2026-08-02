@@ -39,7 +39,7 @@ _HTML = r'''<!DOCTYPE html>
 <meta charset="utf-8">
 <title>Ross Pullback Scanner</title>
 <script src="./static/lightweight-charts.js"></script>
-<script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+<script src="./static/tv.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0d0d0d;color:#e0e0e0;font-family:monospace;font-size:13px;
@@ -573,6 +573,17 @@ def create_app(alert_mgr: AlertManager,
     def static_lightweight_charts():
         _here = os.path.dirname(os.path.abspath(__file__))
         path = os.path.join(_here, 'lightweight-charts.js')
+        if os.path.exists(path):
+            with open(path) as f:
+                content = f.read()
+            return Response(content, mimetype='application/javascript')
+        return 'Not Found', 404
+
+    @app.route('/static/tv.js')
+    @app.route('/scanner/static/tv.js')
+    def static_tv_js():
+        _here = os.path.dirname(os.path.abspath(__file__))
+        path = os.path.join(_here, 'tv.js')
         if os.path.exists(path):
             with open(path) as f:
                 content = f.read()
