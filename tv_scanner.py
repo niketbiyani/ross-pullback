@@ -61,8 +61,8 @@ class TVScanner:
         logger.info("TVScanner polling loop stopped.")
 
     def _run(self):
-        # We query the screener every 1.5 seconds
-        poll_interval = 1.5
+        # We query the screener every 1.0 seconds
+        poll_interval = 1.0
         
         while self.running:
             t0 = time.time()

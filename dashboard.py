@@ -332,9 +332,9 @@ th.sort-on.asc::after{content:' ▲'}
     <div id="tv-placeholder" style="flex:1;display:flex;justify-content:center;align-items:center;color:#4b5563;font-family:monospace;font-size:12px;text-align:center">
       Select a stock row or alert from the list to load the TradingView chart
     </div>
-    <div id="tv-widget-container" style="flex:1;width:100%;height:100%;display:none;flex-direction:column;overflow:hidden;background:#151924">
-      <div id="tv-widget-built-in" style="width:100%;height:100%"></div>
-      <iframe id="tv-widget-premium" style="width:100%;height:100%;display:none;border:none" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-pointer-lock allow-modals"></iframe>
+    <div id="tv-widget-container" style="flex:1;width:100%;height:100%;display:none;overflow:hidden;background:#151924;position:relative">
+      <div id="tv-widget-built-in" style="width:100%;height:100%;position:absolute;top:0;left:0"></div>
+      <iframe id="tv-widget-premium" style="width:100%;height:100%;display:none;border:none;position:absolute;top:0;left:0" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-pointer-lock allow-modals"></iframe>
     </div>
   </div>
 </div>
@@ -523,7 +523,7 @@ function loadTVChart(symbol, tf) {
       "studies": [
         "RSI@tv-basicstudies",
         "MACD@tv-basicstudies",
-        "EMA@tv-basicstudies"
+        "MAExp@tv-basicstudies"
       ]
     });
   }
@@ -765,7 +765,7 @@ function pollDashboardData() {
     fetchScreener();
   }
 }
-setInterval(pollDashboardData, 3000);
+setInterval(pollDashboardData, 1000);
 
 document.getElementById('rvol-date').addEventListener('change', e => {
   rvolDateFilter = e.target.value || _today;
