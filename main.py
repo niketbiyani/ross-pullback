@@ -68,6 +68,7 @@ def main():
                          get_peak_momentum=lambda: tv_scanner.peak_momentum)
                          
         @app.route('/api/tv-screener')
+        @app.route('/scanner/api/tv-screener')
         def api_tv_screener():
             from flask import jsonify
             return jsonify(tv_scanner.screener_data)

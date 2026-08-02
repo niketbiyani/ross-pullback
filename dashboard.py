@@ -843,6 +843,8 @@ def create_app(alert_mgr: AlertManager,
         return 'Not Found', 404
 
     @app.route('/')
+    @app.route('/scanner')
+    @app.route('/scanner/')
     def index():
         html_content = _html.replace("const ENABLE_PULLBACKS = true;", f"const ENABLE_PULLBACKS = {str(Config.ENABLE_PULLBACKS).lower()};")
         resp = Response(html_content, mimetype='text/html')
@@ -850,6 +852,7 @@ def create_app(alert_mgr: AlertManager,
         return resp
 
     @app.route('/api/alerts')
+    @app.route('/scanner/api/alerts')
     def api_alerts():
         data = alert_mgr.get_all()
         if get_peak_momentum:
@@ -861,16 +864,19 @@ def create_app(alert_mgr: AlertManager,
         return jsonify(data)
 
     @app.route('/api/rvol-leaderboard')
+    @app.route('/scanner/api/rvol-leaderboard')
     def api_rvol_leaderboard():
         return jsonify(get_leaderboard())
 
     @app.route('/api/debug')
+    @app.route('/scanner/api/debug')
     def api_debug():
         if get_debug:
             return jsonify(get_debug())
         return jsonify({'error': 'no debug fn'})
 
     @app.route('/api/rescan', methods=['POST'])
+    @app.route('/scanner/api/rescan', methods=['POST'])
     def api_rescan():
         fn = rescan_ref.get('fn') if rescan_ref else None
         if fn is None:
