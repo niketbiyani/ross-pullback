@@ -587,13 +587,12 @@ let screenerSortCol = 'today_volume';
 let screenerSortDir = -1;
 
 function fetchScreener() {
-  fetch('./api/tv-screener')
+  return fetch('./api/tv-screener')
     .then(r => r.json())
     .then(rows => {
       screenerData = rows;
       renderScreener();
-    })
-    .catch(() => {});
+    });
 }
 
 function renderScreener() {
@@ -727,7 +726,16 @@ function renderRapids() {
 }
 
 function pollDashboardData() {
-  fetchScreener();
+  fetchScreener()
+    .then(() => {
+      const s = document.getElementById('status');
+      s.textContent = 'live'; s.className = 'live';
+    })
+    .catch(() => {
+      const s = document.getElementById('status');
+      s.textContent = 'connecting…'; s.className = '';
+    });
+    
   fetch('./api/alerts')
     .then(r => r.json())
     .then(d => {
@@ -740,7 +748,6 @@ setInterval(pollDashboardData, 1000);
 
 pollDashboardData();
 
-let dateInitialized = false;
 function checkBootstrap() {
   fetch('./api/debug').then(r => r.json()).then(d => {
     const banner = document.getElementById('boot-banner');
@@ -750,68 +757,9 @@ function checkBootstrap() {
       banner.style.display = 'block';
       setTimeout(checkBootstrap, 3000);
     }
-    
-    if (d.active_date && !dateInitialized) {
-      dateInitialized = true;
-      const targetDate = d.active_date;
-      document.getElementById('alerts-date').value = targetDate;
-      document.getElementById('rvol-date').value   = targetDate;
-      if (document.getElementById('rapid-date')) {
-        document.getElementById('rapid-date').value = targetDate;
-      }
-      alertsDateFilter = targetDate;
-      rvolDateFilter   = targetDate;
-      rapidsDateFilter = targetDate;
-      render();
-      fetchLeaderboard();
-    }
   }).catch(() => setTimeout(checkBootstrap, 5000));
 }
 checkBootstrap();
-
-/* ================================================================
-   SSE
-   ================================================================ */
-let sseUpdateTimeout = null;
-function queueSseUpdate() {
-  if (sseUpdateTimeout) return;
-  sseUpdateTimeout = setTimeout(() => {
-    render();
-    fetchLeaderboard();
-    sseUpdateTimeout = null;
-  }, 150);
-}
-
-function connectSSE() {
-  const es = new EventSource('./stream');
-  es.onopen = () => {
-    const s = document.getElementById('status');
-    s.textContent = 'live'; s.className = 'live';
-    fetch('./api/alerts').then(r => r.json()).then(mergeAlerts).catch(() => {});
-  };
-  es.onerror = () => {
-    document.getElementById('status').textContent = 'reconnecting…';
-    document.getElementById('status').className = '';
-    es.close();
-    setTimeout(connectSSE, 3000);
-  };
-  es.addEventListener('alert', e => {
-    alerts.unshift(JSON.parse(e.data));
-    if (alerts.length > 5000) alerts.pop();
-    queueSseUpdate();
-  });
-}
-if (!ENABLE_PULLBACKS) {
-  const pullbackBtn = document.querySelector('.tab-btn[data-tab="pullback"]');
-  if (pullbackBtn) pullbackBtn.style.display = 'none';
-  const macdChartDiv = document.getElementById('tv-macd-chart');
-  if (macdChartDiv) {
-    macdChartDiv.style.display = 'none';
-    const rsiDiv = document.getElementById('tv-rsi-chart');
-    if (rsiDiv) rsiDiv.style.borderBottom = 'none';
-  }
-}
-connectSSE();
 </script>
 </body>
 </html>
