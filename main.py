@@ -45,15 +45,58 @@ def main():
     parser.add_argument('--replay', action='store_true', help="Replay today's session from 1m candles on startup")
     args, unknown = parser.parse_known_args()
 
+    _here = os.path.dirname(os.path.abspath(__file__))
+    alert_mgr = AlertManager(persist_dir=_here)
+
+    if Config.USE_TRADINGVIEW_SCANNER:
+        logger.info("Initializing TradingView Screener API Scanner...")
+        from tv_scanner import TVScanner
+        tv_scanner = TVScanner(alert_mgr)
+        
+        def compute_leaderboard():
+            return tv_scanner.leaderboard_data
+            
+        def get_debug():
+            return {
+                'active_symbols': len(tv_scanner.active_symbols),
+                'is_live': tv_scanner.is_live,
+                'tv_scanner': True
+            }
+            
+        _rescan_ref = {}
+        app = create_app(alert_mgr, compute_leaderboard, get_debug, _rescan_ref,
+                         get_peak_momentum=lambda: tv_scanner.peak_momentum)
+                         
+        logger.info('Dashboard → http://%s:%d', Config.DASHBOARD_HOST, Config.DASHBOARD_PORT)
+        flask_thread = threading.Thread(
+            target=lambda: app.run(
+                host=Config.DASHBOARD_HOST, port=Config.DASHBOARD_PORT,
+                threaded=True, use_reloader=False,
+            ),
+            daemon=True, name='Dashboard'
+        )
+        flask_thread.start()
+        
+        # Start TVScanner loop
+        tv_scanner.start()
+        
+        try:
+            while True:
+                time.sleep(300)
+                logger.info('Heartbeat — TV active symbols: %d  alerts: %d',
+                            len(tv_scanner.active_symbols), len(alert_mgr.get_all()))
+        except KeyboardInterrupt:
+            logger.info('Shutting down TV Scanner...')
+            tv_scanner.stop()
+            sys.exit(0)
+
     errors = Config.validate()
     if errors:
         for e in errors:
             logger.error('Config: %s', e)
         sys.exit(1)
 
-    _here = os.path.dirname(os.path.abspath(__file__))
     ctx       = DhanContext(Config.DHAN_CLIENT_ID, Config.DHAN_ACCESS_TOKEN)
-    alert_mgr = AlertManager(persist_dir=_here)
 
     # ── state stores ─────────────────────────────────────────────────────────
     ind_sets: dict[tuple, IndicatorSet]   = {}

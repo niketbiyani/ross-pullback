@@ -39,6 +39,7 @@ _HTML = r'''<!DOCTYPE html>
 <meta charset="utf-8">
 <title>Ross Pullback Scanner</title>
 <script src="./static/lightweight-charts.js"></script>
+<script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0d0d0d;color:#e0e0e0;font-family:monospace;font-size:13px;
@@ -297,18 +298,21 @@ th.sort-on.asc::after{content:' ▲'}
       <span style="color:#60a5fa;font-size:11px;font-weight:bold;letter-spacing:.5px;text-transform:uppercase" id="chart-title">TradingView Live Chart</span>
       <div id="chart-tf-selector" style="display:none;margin-left:20px;display:flex;gap:4px">
         <button class="fb tf-btn active" id="tf-btn-1" onclick="changeChartTf(1)">1m</button>
-        <button class="fb tf-btn" id="tf-btn-3" onclick="changeChartTf(3)">3m</button>
         <button class="fb tf-btn" id="tf-btn-5" onclick="changeChartTf(5)">5m</button>
+        <button class="fb tf-btn" id="tf-btn-15" onclick="changeChartTf(15)">15m</button>
       </div>
+      <label style="margin-left:12px;color:#9ca3af;font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
+        <input type="checkbox" id="premium-chart-chk" onchange="togglePremiumChart()" style="cursor:pointer">
+        Premium Chart
+      </label>
       <button id="chart-expand-btn" class="fb" style="margin-left:auto;font-size:10px;padding:2px 6px">Fullscreen Chart</button>
     </div>
     <div id="tv-placeholder" style="flex:1;display:flex;justify-content:center;align-items:center;color:#4b5563;font-family:monospace;font-size:12px;text-align:center">
       Select a stock row or alert from the list to load the TradingView chart
     </div>
     <div id="tv-widget-container" style="flex:1;width:100%;height:100%;display:none;flex-direction:column;overflow:hidden;background:#151924">
-      <div id="tv-main-chart" style="flex:5;width:100%;border-bottom:1px solid #1f2937"></div>
-      <div id="tv-rsi-chart" style="flex:2;width:100%;border-bottom:1px solid #1f2937"></div>
-      <div id="tv-macd-chart" style="flex:2;width:100%"></div>
+      <div id="tv-widget-built-in" style="width:100%;height:100%"></div>
+      <iframe id="tv-widget-premium" style="width:100%;height:100%;display:none;border:none" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-pointer-lock allow-modals"></iframe>
     </div>
   </div>
 </div>
@@ -429,23 +433,17 @@ document.getElementById('rescan-btn').addEventListener('click', () => {
     .catch(() => { btn.textContent = '↺ Rescan'; btn.disabled = false; });
 });
 
-/* Lightweight Charts state */
-let chartMain = null;
-let chartRsi = null;
-let chartMacd = null;
-
-let candleSeries = null;
-let ema20Series = null;
-let ema50Series = null;
-let rsiSeries = null;
-let macdLineSeries = null;
-let macdSigSeries = null;
-let macdHistSeries = null;
-
+/* TradingView Widget & Iframe state */
 let currentSymbol = null;
-let currentTf = null;
-let isSyncing = false;
-let activeChartData = [];
+let currentTf = 1;
+let usePremiumChart = false;
+
+function togglePremiumChart() {
+  usePremiumChart = document.getElementById('premium-chart-chk').checked;
+  if (currentSymbol) {
+    loadTVChart(currentSymbol, currentTf);
+  }
+}
 
 function changeChartTf(tf) {
   if (!currentSymbol) return;
@@ -458,35 +456,6 @@ function updateTfButtons(tf) {
   if (activeBtn) activeBtn.classList.add('active');
 }
 
-function createBaseChartConfig(width, height, showTimeScale) {
-  return {
-    width: width,
-    height: height,
-    layout: {
-      background: { type: 'solid', color: '#151924' },
-      textColor: '#d1d4dc',
-    },
-    grid: {
-      vertLines: { color: 'rgba(42, 46, 57, 0.15)' },
-      horzLines: { color: 'rgba(42, 46, 57, 0.15)' },
-    },
-    rightPriceScale: {
-      borderColor: 'rgba(197, 203, 206, 0.4)',
-      autoScale: true,
-      width: 80,
-    },
-    timeScale: {
-      borderColor: 'rgba(197, 203, 206, 0.4)',
-      visible: showTimeScale,
-      timeVisible: true,
-      secondsVisible: false,
-    },
-    crosshair: {
-      mode: LightweightCharts.CrosshairMode.Normal,
-    },
-  };
-}
-
 function loadTVChart(symbol, tf) {
   currentSymbol = symbol;
   currentTf = tf;
@@ -497,185 +466,43 @@ function loadTVChart(symbol, tf) {
   const container = document.getElementById('tv-widget-container');
   container.style.display = 'flex';
   
-  if (chartMain) { try { chartMain.remove(); } catch(e) {} chartMain = null; }
-  if (chartRsi) { try { chartRsi.remove(); } catch(e) {} chartRsi = null; }
-  if (chartMacd) { try { chartMacd.remove(); } catch(e) {} chartMacd = null; }
-  
-  candleSeries = ema20Series = ema50Series = rsiSeries = macdLineSeries = macdSigSeries = macdHistSeries = null;
+  const builtInDiv = document.getElementById('tv-widget-built-in');
+  const premiumIframe = document.getElementById('tv-widget-premium');
   
   document.getElementById('chart-title').textContent = `${symbol} — ${tf}m Chart`;
   
-  const chartWidth = container.clientWidth || 600;
-  const mainDiv = document.getElementById('tv-main-chart');
-  const rsiDiv = document.getElementById('tv-rsi-chart');
-  const macdDiv = document.getElementById('tv-macd-chart');
-  
-  const mainH = mainDiv.clientHeight || 250;
-  const rsiH = rsiDiv.clientHeight || 100;
-  const macdH = macdDiv.clientHeight || 100;
-  
-  console.log("loadTVChart: initializing 3 subcharts with width", chartWidth);
-
-  const rsiShowTimeScale = !ENABLE_PULLBACKS;
-  chartMain = LightweightCharts.createChart(mainDiv, createBaseChartConfig(chartWidth, mainH, false));
-  chartRsi = LightweightCharts.createChart(rsiDiv, createBaseChartConfig(chartWidth, rsiH, rsiShowTimeScale));
-  chartMacd = LightweightCharts.createChart(macdDiv, createBaseChartConfig(chartWidth, macdH, ENABLE_PULLBACKS));
-  
-  // Series Main Chart
-  candleSeries = chartMain.addSeries(LightweightCharts.CandlestickSeries, {
-    upColor: '#26a69a',
-    downColor: '#ef5350',
-    borderDownColor: '#ef5350',
-    borderUpColor: '#26a69a',
-    wickDownColor: '#ef5350',
-    wickUpColor: '#26a69a',
-  });
-  ema20Series = chartMain.addSeries(LightweightCharts.LineSeries, {
-    color: '#29b6f6',
-    lineWidth: 1.5,
-    title: 'EMA 20',
-    lastValueVisible: false,
-    priceLineVisible: false,
-  });
-  ema50Series = chartMain.addSeries(LightweightCharts.LineSeries, {
-    color: '#ab47bc',
-    lineWidth: 1.5,
-    title: 'EMA 50',
-    lastValueVisible: false,
-    priceLineVisible: false,
-  });
-  
-  // Series RSI Chart
-  rsiSeries = chartRsi.addSeries(LightweightCharts.LineSeries, {
-    color: '#e040fb',
-    lineWidth: 1.5,
-    title: 'RSI 14',
-    lastValueVisible: false,
-    priceLineVisible: false,
-  });
-  rsiSeries.createPriceLine({ price: 70, color: 'rgba(239, 83, 80, 0.4)', lineStyle: 2, lineWidth: 1, axisLabelVisible: true, title: 'OB 70' });
-  rsiSeries.createPriceLine({ price: 30, color: 'rgba(38, 166, 154, 0.4)', lineStyle: 2, lineWidth: 1, axisLabelVisible: true, title: 'OS 30' });
-  rsiSeries.createPriceLine({ price: 50, color: 'rgba(255, 255, 255, 0.15)', lineStyle: 2, lineWidth: 1, axisLabelVisible: false });
-
-  // Series MACD Chart
-  macdLineSeries = chartMacd.addSeries(LightweightCharts.LineSeries, {
-    color: '#29b6f6',
-    lineWidth: 1.2,
-    title: 'MACD',
-    lastValueVisible: false,
-    priceLineVisible: false,
-  });
-  macdSigSeries = chartMacd.addSeries(LightweightCharts.LineSeries, {
-    color: '#ffa726',
-    lineWidth: 1.2,
-    title: 'Signal',
-    lastValueVisible: false,
-    priceLineVisible: false,
-  });
-  macdHistSeries = chartMacd.addSeries(LightweightCharts.HistogramSeries, {
-    title: 'Histogram',
-  });
-
-  // Sync Time Scales (zoom / scroll)
-  const charts = [chartMain, chartRsi, chartMacd];
-  charts.forEach((chart, idx, arr) => {
-    chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
-      if (isSyncing || !range) return;
-      isSyncing = true;
-      arr.forEach(other => {
-        if (other !== chart) {
-          other.timeScale().setVisibleLogicalRange(range);
-        }
-      });
-      isSyncing = false;
+  if (usePremiumChart) {
+    builtInDiv.style.display = 'none';
+    premiumIframe.style.display = 'block';
+    premiumIframe.src = `https://in.tradingview.com/chart/?symbol=NSE:${symbol}&interval=${tf}`;
+  } else {
+    premiumIframe.style.display = 'none';
+    builtInDiv.style.display = 'block';
+    builtInDiv.innerHTML = '';
+    
+    let tvInterval = "1";
+    if (tf === 5) tvInterval = "5";
+    if (tf === 15) tvInterval = "15";
+    
+    new TradingView.widget({
+      "autosize": true,
+      "symbol": "NSE:" + symbol,
+      "interval": tvInterval,
+      "timezone": "Asia/Kolkata",
+      "theme": "dark",
+      "style": "1",
+      "locale": "en",
+      "enable_publishing": false,
+      "hide_side_toolbar": false,
+      "allow_symbol_change": true,
+      "container_id": "tv-widget-built-in",
+      "studies": [
+        "RSI@tv-basicstudies",
+        "MACD@tv-basicstudies",
+        "EMA@tv-basicstudies"
+      ]
     });
-  });
-
-  // Sync Crosshairs
-  function getSeriesForChart(chart) {
-    if (chart === chartMain) return candleSeries;
-    if (chart === chartRsi) return rsiSeries;
-    if (chart === chartMacd) return macdLineSeries;
-    return null;
   }
-  charts.forEach((chart, idx, arr) => {
-    chart.subscribeCrosshairMove(param => {
-      if (isSyncing) return;
-      isSyncing = true;
-      arr.forEach(other => {
-        if (other !== chart) {
-          if (!param || !param.time || !param.point) {
-            other.clearCrosshairPosition();
-          } else {
-            const otherSeries = getSeriesForChart(other);
-            if (otherSeries) {
-              let val = 0;
-              const bar = activeChartData.find(d => d.time === param.time);
-              if (bar) {
-                if (other === chartRsi) val = bar.rsi;
-                else if (other === chartMacd) val = bar.macd;
-                else if (other === chartMain) val = bar.close;
-              } else {
-                val = other === chartRsi ? 50 : 0;
-              }
-              other.setCrosshairPosition(val, param.time, otherSeries);
-            }
-          }
-        }
-      });
-      isSyncing = false;
-    });
-  });
-  
-  let lastObservedWidth = 0;
-  let lastObservedHeights = { main: 0, rsi: 0, macd: 0 };
-  const resizeObserver = new ResizeObserver(entries => {
-    for (let entry of entries) {
-      const { width } = entry.contentRect;
-      if (width > 0) {
-        const mH = mainDiv.clientHeight;
-        const rH = rsiDiv.clientHeight;
-        const mcH = macdDiv.clientHeight;
-        const sizeChanged = width !== lastObservedWidth || 
-                            mH !== lastObservedHeights.main || 
-                            rH !== lastObservedHeights.rsi || 
-                            mcH !== lastObservedHeights.macd;
-        if (sizeChanged) {
-          lastObservedWidth = width;
-          lastObservedHeights = { main: mH, rsi: rH, macd: mcH };
-          if (chartMain && mH > 0) chartMain.resize(width, mH);
-          if (chartRsi && rH > 0) chartRsi.resize(width, rH);
-          if (chartMacd && mcH > 0) chartMacd.resize(width, mcH);
-        }
-      }
-    }
-  });
-  resizeObserver.observe(container);
-  
-  refreshActiveChart();
-}
-
-function refreshActiveChart() {
-  if (!currentSymbol || !candleSeries) return;
-  fetch(`./api/bars?symbol=${currentSymbol}&tf=${currentTf}`)
-    .then(r => r.json())
-    .then(data => {
-      if (data && data.length > 0) {
-        activeChartData = data;
-        candleSeries.setData(data.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close })));
-        ema20Series.setData(data.map(d => ({ time: d.time, value: d.ema20 })));
-        ema50Series.setData(data.map(d => ({ time: d.time, value: d.ema50 })));
-        rsiSeries.setData(data.map(d => ({ time: d.time, value: d.rsi })));
-        macdLineSeries.setData(data.map(d => ({ time: d.time, value: d.macd })));
-        macdSigSeries.setData(data.map(d => ({ time: d.time, value: d.macd_sig })));
-        macdHistSeries.setData(data.map(d => ({
-          time: d.time,
-          value: d.macd_hist,
-          color: d.macd_hist >= 0 ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
-        })));
-      }
-    })
-    .catch(err => console.error("Error loading chart data:", err));
 }
 
 

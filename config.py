@@ -44,6 +44,8 @@ class Config:
     
     ENABLE_PULLBACKS: bool = os.getenv("ENABLE_PULLBACKS", "True").lower() in ("true", "1", "yes")
     
+    USE_TRADINGVIEW_SCANNER: bool = os.getenv("USE_TRADINGVIEW_SCANNER", "True").lower() in ("true", "1", "yes")
+    
     # Custom symbols list to always include (comma-separated, e.g. "RESPONIND,FINOPB")
     ADDITIONAL_SYMBOLS: list[str] = [s.strip().upper() for s in os.getenv("ADDITIONAL_SYMBOLS", "").split(",") if s.strip()]
 
