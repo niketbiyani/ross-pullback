@@ -201,7 +201,7 @@ th.sort-on.asc::after{content:' ▲'}
       </div>
       <label style="margin-left:12px;color:#9ca3af;font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
         <input type="checkbox" id="premium-chart-chk" onchange="togglePremiumChart()" style="cursor:pointer">
-        Premium Chart (Separate Window)
+        Premium Chart
       </label>
       <button id="chart-expand-btn" class="fb" style="margin-left:auto;font-size:10px;padding:2px 6px">Fullscreen Chart</button>
     </div>
@@ -258,18 +258,14 @@ function loadTVChart(symbol, tf) {
   document.getElementById('chart-title').textContent = `${symbol} — ${tf}m Chart`;
   document.getElementById('chart-tf-selector').style.display = 'flex';
   
+  placeholder.style.display = 'none';
+  container.style.display = 'flex';
+  
   if (usePremiumChart) {
-    container.style.display = 'none';
-    placeholder.style.display = 'flex';
-    placeholder.innerHTML = `<div style="text-align:center;padding:20px">
-      <span style="color:#60a5fa;font-size:14px;font-weight:bold">Premium Chart opened in separate tab</span><br/>
-      <span style="color:#9ca3af;font-size:11px;margin-top:6px;display:block">Your TradingView session will remain 100% logged in.</span>
-      <span style="color:#6b7280;font-size:10px;margin-top:4px;display:block">Clicking any symbol in the list will instantly update that tab.</span>
-    </div>`;
-    window.open(`https://in.tradingview.com/chart/?symbol=NSE:${symbol}&interval=${tf}`, 'tv_premium_tab');
+    builtInDiv.style.display = 'none';
+    premiumIframe.style.display = 'block';
+    premiumIframe.src = `https://in.tradingview.com/chart/?symbol=NSE:${symbol}&interval=${tf}`;
   } else {
-    placeholder.style.display = 'none';
-    container.style.display = 'flex';
     premiumIframe.style.display = 'none';
     builtInDiv.style.display = 'block';
     
