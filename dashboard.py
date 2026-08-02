@@ -209,8 +209,8 @@ th.sort-on.asc::after{content:' ▲'}
       Select a stock row or alert from the list to load the TradingView chart
     </div>
     <div id="tv-widget-container" style="flex:1;width:100%;height:100%;display:none;overflow:hidden;background:#151924;position:relative">
-      <iframe id="tv-widget-built-in" style="width:100%;height:100%;position:absolute;top:0;left:0;border:none" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-pointer-lock allow-modals"></iframe>
-      <iframe id="tv-widget-premium" style="width:100%;height:100%;display:none;border:none;position:absolute;top:0;left:0" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-pointer-lock allow-modals"></iframe>
+      <iframe id="tv-widget-built-in" style="width:100%;height:100%;position:absolute;top:0;left:0;border:none"></iframe>
+      <iframe id="tv-widget-premium" style="width:100%;height:100%;display:none;border:none;position:absolute;top:0;left:0"></iframe>
     </div>
   </div>
 </div>
