@@ -333,7 +333,7 @@ th.sort-on.asc::after{content:' ▲'}
       Select a stock row or alert from the list to load the TradingView chart
     </div>
     <div id="tv-widget-container" style="flex:1;width:100%;height:100%;display:none;overflow:hidden;background:#151924;position:relative">
-      <div id="tv-widget-built-in" style="width:100%;height:100%;position:absolute;top:0;left:0"></div>
+      <iframe id="tv-widget-built-in" style="width:100%;height:100%;position:absolute;top:0;left:0;border:none" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-pointer-lock allow-modals"></iframe>
       <iframe id="tv-widget-premium" style="width:100%;height:100%;display:none;border:none;position:absolute;top:0;left:0" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-pointer-lock allow-modals"></iframe>
     </div>
   </div>
@@ -502,30 +502,12 @@ function loadTVChart(symbol, tf) {
   } else {
     premiumIframe.style.display = 'none';
     builtInDiv.style.display = 'block';
-    builtInDiv.innerHTML = '';
     
     let tvInterval = "1";
     if (tf === 5) tvInterval = "5";
     if (tf === 15) tvInterval = "15";
     
-    new TradingView.widget({
-      "autosize": true,
-      "symbol": "NSE:" + symbol,
-      "interval": tvInterval,
-      "timezone": "Asia/Kolkata",
-      "theme": "dark",
-      "style": "1",
-      "locale": "en",
-      "enable_publishing": false,
-      "hide_side_toolbar": false,
-      "allow_symbol_change": true,
-      "container_id": "tv-widget-built-in",
-      "studies": [
-        "RSI@tv-basicstudies",
-        "MACD@tv-basicstudies",
-        "MAExp@tv-basicstudies"
-      ]
-    });
+    builtInDiv.src = `https://s.tradingview.com/widgetembed/?symbol=NSE:${symbol}&interval=${tvInterval}&theme=dark&style=1&timezone=Asia/Kolkata&studies=RSI%40tv-basicstudies%3BMACD%40tv-basicstudies%3BMAExp%40tv-basicstudies`;
   }
 }
 
