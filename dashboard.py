@@ -737,7 +737,7 @@ function fetchScreener() {
       const tb = document.getElementById('screener-tb');
       if (!tb) return;
       tb.innerHTML = rows.map(row => {
-        return `<tr data-sym="${row.symbol}" style="cursor:pointer" onclick="loadTVChart('${row.symbol}', 1)">
+        return `<tr data-sym="${row.symbol}" style="cursor:pointer">
           <td style="padding:6px 10px;text-align:left"><b>${row.symbol}</b></td>
           <td style="padding:6px 10px;text-align:right">${row.close.toFixed(2)}</td> 
           <td style="padding:6px 10px;text-align:right" class="${row.overnight_chg >= 0 ? 'LONG' : 'SHORT'}">${row.overnight_chg >= 0 ? '+' : ''}${row.overnight_chg.toFixed(2)}%</td>
@@ -747,6 +747,11 @@ function fetchScreener() {
       }).join('');
       
       document.querySelectorAll('#screener-tb tr').forEach(row => {
+        row.addEventListener('click', () => {
+          document.querySelectorAll('#tb tr, #rapid-tb tr, .sym-header, .ep-row, #screener-tb tr').forEach(r => r.classList.remove('active-row'));
+          row.classList.add('active-row');
+          loadTVChart(row.dataset.sym, 1);
+        });
         row.classList.toggle('active-row', row.dataset.sym === currentSymbol);
       });
     })
