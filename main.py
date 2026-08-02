@@ -67,6 +67,11 @@ def main():
         app = create_app(alert_mgr, compute_leaderboard, get_debug, _rescan_ref,
                          get_peak_momentum=lambda: tv_scanner.peak_momentum)
                          
+        @app.route('/api/tv-screener')
+        def api_tv_screener():
+            from flask import jsonify
+            return jsonify(tv_scanner.screener_data)
+                         
         logger.info('Dashboard → http://%s:%d', Config.DASHBOARD_HOST, Config.DASHBOARD_PORT)
         flask_thread = threading.Thread(
             target=lambda: app.run(

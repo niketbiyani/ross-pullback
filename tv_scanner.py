@@ -41,6 +41,7 @@ class TVScanner:
         # Globally tracked fields for APIs
         self.peak_momentum = {}   # symbol -> {'pct', 'ts', 'window', 'tf'}
         self.leaderboard_data = [] # List of dicts for compute_leaderboard
+        self.screener_data = []    # Full matching stocks list
         self.active_symbols = set()
         
         # Live status
@@ -142,6 +143,7 @@ class TVScanner:
             # Build leaderboard row
             leaderboard_rows.append({
                 'symbol': symbol,
+                'close': close,
                 'bar_rvol': round(rvol, 1),
                 'overnight_chg': change,
                 'rs_coverage': 0.0,
@@ -322,3 +324,8 @@ class TVScanner:
         # Sort and update leaderboard data
         leaderboard_rows.sort(key=lambda x: x['bar_rvol'], reverse=True)
         self.leaderboard_data = leaderboard_rows[:50]
+
+        # Sort by volume descending for the default screener list
+        screener_rows = list(leaderboard_rows)
+        screener_rows.sort(key=lambda x: x['today_volume'], reverse=True)
+        self.screener_data = screener_rows

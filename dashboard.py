@@ -152,6 +152,7 @@ th.sort-on.asc::after{content:' ▲'}
       <span style="color:#60a5fa;font-size:11px;font-weight:bold;letter-spacing:.5px;text-transform:uppercase">Scanner</span>
       <div id="tabs" style="display:flex;gap:4px;margin-left:auto">
         <button class="tab-btn on" data-tab="rvol">Movers</button>
+        <button class="tab-btn" data-tab="screener">Screener</button>
         <button class="tab-btn" data-tab="pullback" style="display:none">Pullback Alerts</button>
         <button class="tab-btn" data-tab="rapid">Rapid Momentum</button>
       </div>
@@ -200,6 +201,27 @@ th.sort-on.asc::after{content:' ▲'}
           <tbody id="hist-tbody"></tbody>
           </table>
         </div>
+      </div>
+    </div>
+    
+    <!-- Panel: Screener -->
+    <div id="panel-screener" class="left-panel-content" style="flex:1;display:none;flex-direction:column;overflow:hidden">
+      <div style="flex-shrink:0;padding:6px 14px;background:#080d14;border-bottom:1px solid #1f2937;display:flex;align-items:center;gap:10px">
+        <span style="font-weight:bold;color:#e0e0e0;font-size:11px">Default TV Screener (Price > 100, Vol > 1M)</span>
+      </div>
+      <div class="scroller">
+        <table id="screener-table" style="width:100%;border-collapse:collapse">
+          <thead>
+            <tr style="position:sticky;top:0;background:#080d14;z-index:5">
+              <th style="padding:4px 10px;color:#4b5563;font-weight:normal;font-size:10px;text-align:left;border-bottom:1px solid #1f2937">Symbol</th>
+              <th style="padding:4px 10px;color:#4b5563;font-weight:normal;font-size:10px;text-align:right;border-bottom:1px solid #1f2937">Price</th>
+              <th style="padding:4px 10px;color:#4b5563;font-weight:normal;font-size:10px;text-align:right;border-bottom:1px solid #1f2937">Change%</th>
+              <th style="padding:4px 10px;color:#4b5563;font-weight:normal;font-size:10px;text-align:right;border-bottom:1px solid #1f2937">Volume</th>
+              <th style="padding:4px 10px;color:#4b5563;font-weight:normal;font-size:10px;text-align:right;border-bottom:1px solid #1f2937">RVOL</th>
+            </tr>
+          </thead>
+          <tbody id="screener-tb"></tbody>
+        </table>
       </div>
     </div>
     
@@ -332,10 +354,12 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
     
     document.getElementById('panel-rvol').style.display     = tab === 'rvol'     ? 'flex' : 'none';
+    document.getElementById('panel-screener').style.display = tab === 'screener' ? 'flex' : 'none';
     document.getElementById('panel-pullback').style.display = tab === 'pullback' ? 'flex' : 'none';
     document.getElementById('panel-rapid').style.display    = tab === 'rapid'    ? 'flex' : 'none';
     
     if (tab === 'rvol') applyRvolDate();
+    if (tab === 'screener') fetchScreener();
     updateActiveCount();
   });
 });
@@ -703,10 +727,40 @@ function fetchLeaderboard() {
   fetch('./api/rvol-leaderboard').then(r => r.json()).then(rows => {
     lbData = rows;
     renderLeaderboard();
-    refreshActiveChart();
   }).catch(() => {});
 }
-setInterval(fetchLeaderboard, 5000);
+
+function fetchScreener() {
+  fetch('./api/tv-screener')
+    .then(r => r.json())
+    .then(rows => {
+      const tb = document.getElementById('screener-tb');
+      if (!tb) return;
+      tb.innerHTML = rows.map(row => {
+        return `<tr data-sym="${row.symbol}" style="cursor:pointer" onclick="loadTVChart('${row.symbol}', 1)">
+          <td style="padding:6px 10px;text-align:left"><b>${row.symbol}</b></td>
+          <td style="padding:6px 10px;text-align:right">${row.close.toFixed(2)}</td> 
+          <td style="padding:6px 10px;text-align:right" class="${row.overnight_chg >= 0 ? 'LONG' : 'SHORT'}">${row.overnight_chg >= 0 ? '+' : ''}${row.overnight_chg.toFixed(2)}%</td>
+          <td style="padding:6px 10px;text-align:right">${(row.today_volume/1000000).toFixed(2)}M</td>
+          <td style="padding:6px 10px;text-align:right">${row.bar_rvol.toFixed(1)}</td>
+        </tr>`;
+      }).join('');
+      
+      document.querySelectorAll('#screener-tb tr').forEach(row => {
+        row.classList.toggle('active-row', row.dataset.sym === currentSymbol);
+      });
+    })
+    .catch(() => {});
+}
+
+function pollDashboardData() {
+  if (currentTab === 'rvol') {
+    fetchLeaderboard();
+  } else if (currentTab === 'screener') {
+    fetchScreener();
+  }
+}
+setInterval(pollDashboardData, 3000);
 
 document.getElementById('rvol-date').addEventListener('change', e => {
   rvolDateFilter = e.target.value || _today;
