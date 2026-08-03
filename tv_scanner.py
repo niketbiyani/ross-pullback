@@ -205,10 +205,11 @@ class TVScanner:
                 # Combine history + current bar to get full list of up to 5 bars
                 hist = list(self.bar_history[symbol][tf]) + [current_bar]
 
-                # Calculate best move pct over last 1 or 2 bars (max 2 bars)
+                # Timeframe-specific lookback limits (1m: 5 bars, 5m: 3 bars, 15m: 2 bars)
+                max_n = 5 if tf == 1 else (3 if tf == 5 else 2)
                 best_pct = 0.0
                 best_win = 1
-                for n in range(1, min(3, len(hist) + 1)):
+                for n in range(1, min(max_n + 1, len(hist) + 1)):
                     win = hist[-n:]
                     if len(win) > 0:
                         low_idx = min(range(len(win)), key=lambda idx: win[idx]['low'])
