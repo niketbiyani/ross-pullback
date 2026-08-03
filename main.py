@@ -74,10 +74,21 @@ def main():
             return jsonify(tv_scanner.screener_data)
                          
         logger.info('Dashboard → http://%s:%d', Config.DASHBOARD_HOST, Config.DASHBOARD_PORT)
+        ssl_context = None
+        _here = os.path.dirname(os.path.abspath(__file__))
+        cert_path = os.path.join(_here, 'cert.pem')
+        key_path = os.path.join(_here, 'key.pem')
+        if os.path.exists(cert_path) and os.path.exists(key_path):
+            ssl_context = (cert_path, key_path)
+            logger.info("SSL Certificate found. Starting Dashboard in HTTPS mode.")
+        else:
+            logger.info("No SSL Certificate found. Starting Dashboard in HTTP mode.")
+
         flask_thread = threading.Thread(
             target=lambda: app.run(
                 host=Config.DASHBOARD_HOST, port=Config.DASHBOARD_PORT,
                 threaded=True, use_reloader=False,
+                ssl_context=ssl_context
             ),
             daemon=True, name='Dashboard'
         )
