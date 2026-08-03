@@ -123,6 +123,7 @@ class TVScanner:
             if not symbol:
                 continue
 
+            import math
             close = float(row_data.get('close', 0.0) or 0.0)
             open_d = float(row_data.get('open', 0.0) or 0.0)
             high_d = float(row_data.get('high', 0.0) or 0.0)
@@ -130,6 +131,14 @@ class TVScanner:
             volume = float(row_data.get('volume', 0.0) or 0.0)
             change = float(row_data.get('change', 0.0) or 0.0)
             rvol = float(row_data.get('relative_volume_10d_calc', 0.0) or 0.0)
+
+            if math.isnan(close): close = 0.0
+            if math.isnan(open_d): open_d = 0.0
+            if math.isnan(high_d): high_d = 0.0
+            if math.isnan(low_d): low_d = 0.0
+            if math.isnan(volume): volume = 0.0
+            if math.isnan(change): change = 0.0
+            if math.isnan(rvol): rvol = 0.0
 
             if close <= 0:
                 continue
