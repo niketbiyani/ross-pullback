@@ -328,4 +328,4 @@ class TVScanner:
         # Sort by volume descending for the default screener list
         screener_rows = list(leaderboard_rows)
         screener_rows.sort(key=lambda x: x['today_volume'], reverse=True)
-        self.screener_data = screener_rows[:150]
+        self.screener_data = screener_rows
