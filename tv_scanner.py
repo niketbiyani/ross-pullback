@@ -108,7 +108,8 @@ class TVScanner:
                  Column('exchange') == 'NSE',
                  Column('volume') > Config.MOVER_MIN_VOLUME,
                  Column('close') > Config.CLOSE_MIN_PRICE
-             ))
+             )
+             .limit(2000))
         
         count, df = q.get_scanner_data()
         if df.empty:
