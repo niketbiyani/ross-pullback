@@ -177,12 +177,10 @@ th.sort-on.asc::after{content:' ▲'}
         <table style="width:100%;border-collapse:collapse">
           <thead style="position:sticky;top:0;background:#080d14;z-index:5">
             <tr>
-              <th style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #1f2937;font-size:10px">Time</th>
-              <th style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #1f2937;font-size:10px">Symbol</th>
-              <th style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #1f2937;font-size:10px">TF</th>
-              <th style="padding:6px 10px;text-align:right;color:#4b5563;font-weight:normal;border-bottom:1px solid #1f2937;font-size:10px">Spike%</th>
-              <th style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #1f2937;font-size:10px;padding-left:15px">Status</th>
-              <th style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #1f2937;font-size:10px;padding-left:15px">Setup (Entry / SL)</th>
+              <th class="sortable-alerts" data-col="ts" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #1f2937;font-size:10px;cursor:pointer;user-select:none">Time</th>
+              <th class="sortable-alerts" data-col="symbol" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #1f2937;font-size:10px;cursor:pointer;user-select:none">Symbol</th>
+              <th class="sortable-alerts" data-col="tf" style="padding:6px 10px;text-align:left;color:#4b5563;font-weight:normal;border-bottom:1px solid #1f2937;font-size:10px;cursor:pointer;user-select:none">TF</th>
+              <th class="sortable-alerts" data-col="pct" style="padding:6px 10px;text-align:right;color:#4b5563;font-weight:normal;border-bottom:1px solid #1f2937;font-size:10px;cursor:pointer;user-select:none">Spike%</th>
             </tr>
           </thead>
           <tbody id="rapid-tb"></tbody>
@@ -322,6 +320,8 @@ let alerts = [];
 let screenerData = [];
 let screenerSortCol = 'today_volume';
 let screenerSortDir = -1;
+let alertsSortCol = 'ts';
+let alertsSortDir = -1;
 
 function fetchScreener() {
   return fetch('./api/tv-screener')
@@ -391,64 +391,26 @@ function renderRapids() {
   if (!tb) return;
   
   const rawRows = alerts.filter(okRapid);
-  const grouped = {};
-  rawRows.forEach(a => {
-    const k = a.symbol + ':' + a.tf + ':' + (a.breakout_ts || a.ts);
-    if (!grouped[k]) {
-      grouped[k] = {
-        latest: a,
-        earliest_time_ist: a.time_ist,
-        earliest_ts: a.ts
-      };
-    } else {
-      if (a.ts > grouped[k].latest.ts) {
-        grouped[k].latest = a;
-      }
-      if (a.ts < grouped[k].earliest_ts) {
-        grouped[k].earliest_ts = a.ts;
-        grouped[k].earliest_time_ist = a.time_ist;
-      }
+  
+  const sorted = [...rawRows].sort((a, b) => {
+    let va = a[alertsSortCol];
+    let vb = b[alertsSortCol];
+    if (alertsSortCol === 'pct') {
+      va = a.spike_pct || a.pct || 0.0;
+      vb = b.spike_pct || b.pct || 0.0;
     }
+    if (typeof va === 'string') return alertsSortDir * va.localeCompare(vb);
+    return alertsSortDir * (va - vb);
   });
   
-  const processedRows = Object.values(grouped).map(g => {
-    return {
-      ...g.latest,
-      breakout_time_ist: g.earliest_time_ist
-    };
-  });
+  document.getElementById('alert-count').textContent = sorted.length + ' alerts';
   
-  const rows = processedRows.sort((a, b) => b.ts - a.ts);
-  
-  document.getElementById('alert-count').textContent = rows.length + ' alerts';
-  
-  tb.innerHTML = rows.map((a, i) => {
-    let statusHtml = '';
-    const st = a.status || 'SPIKING';
-    if (st === 'PAUSE') {
-      statusHtml = `<span style="background:#78350f;color:#fbbf24;padding:2px 6px;border-radius:3px;font-weight:bold;font-size:10px">PAUSE</span>`;
-    } else if (st === 'TRIGGERED') {
-      statusHtml = `<span style="background:#064e3b;color:#34d399;padding:2px 6px;border-radius:3px;font-weight:bold;font-size:10px">TRIGGERED</span>`;
-    } else {
-      statusHtml = `<span style="background:#064e3b;color:#60a5fa;padding:2px 6px;border-radius:3px;font-weight:bold;font-size:10px">SPIKING</span>`;
-    }
-    
-    let setupHtml = '';
-    if (st === 'PAUSE' && a.entry_price && a.sl_level) {
-      setupHtml = `<span style="color:#e2e8f0">Trigger: <b>${a.entry_price.toFixed(2)}</b></span><span style="color:#64748b;margin-left:6px;font-size:11px">SL: ${a.sl_level.toFixed(2)}</span>`;
-    } else if (st === 'TRIGGERED') {
-      setupHtml = `<span style="color:#34d399;font-weight:bold">Trigger Crossed!</span>`;
-    } else {
-      setupHtml = `<span style="color:#4b5563">-</span>`;
-    }
-    
+  tb.innerHTML = sorted.map((a, i) => {
     return `<tr class="${i<3?'new':''}" data-sym="${a.symbol}" data-tf="${a.tf}" style="cursor:pointer">
-      <td>${a.breakout_time_ist || a.time_ist}</td>
-      <td><b>${a.symbol}</b></td>
-      <td class="tf">${a.tf}m</td>
-      <td style="text-align:right" class="LONG">${(a.spike_pct || a.pct || 0.0).toFixed(2)}%</td>
-      <td style="padding-left:15px">${statusHtml}</td>
-      <td style="padding-left:15px">${setupHtml}</td>
+      <td style="padding:6px 10px;text-align:left">${a.time_ist}</td>
+      <td style="padding:6px 10px;text-align:left"><b>${a.symbol}</b></td>
+      <td style="padding:6px 10px;text-align:left" class="tf">${a.tf}m</td>
+      <td style="padding:6px 10px;text-align:right" class="LONG">${(a.spike_pct || a.pct || 0.0).toFixed(2)}%</td>
     </tr>`;
   }).join('');
   
@@ -461,6 +423,26 @@ function renderRapids() {
     row.classList.toggle('active-row', row.dataset.sym === currentSymbol);
   });
 }
+
+document.querySelectorAll('.sortable-alerts').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    if (alertsSortCol === col) {
+      alertsSortDir *= -1;
+    } else {
+      alertsSortCol = col;
+      alertsSortDir = -1;
+    }
+    document.querySelectorAll('.sortable-alerts').forEach(h => {
+      h.classList.remove('sort-on', 'asc');
+    });
+    th.classList.add('sort-on');
+    if (alertsSortDir === 1) {
+      th.classList.add('asc');
+    }
+    renderRapids();
+  });
+});
 
 function pollDashboardData() {
   fetchScreener()

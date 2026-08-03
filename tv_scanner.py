@@ -291,45 +291,7 @@ class TVScanner:
                     }
                     self.alert_mgr.add_event(rapid_evt)
 
-                # ── State Machine: Pause ──
-                # Check for pullback red candle: close is lower than open or previous close
-                prev_c = hist[-2].get('close', current_bar['open']) if len(hist) >= 2 else current_bar['open']
-                if close < current_bar['open'] or close < prev_c:
-                    if last_rapid is not None and last_rapid['status'] == 'SPIKING':
-                        bars_since = (now_ts - last_rapid['ts']) // (60 * tf)
-                        if 1 <= bars_since <= 5:
-                            last_rapid['status'] = 'PAUSE'
-                            last_rapid['trigger_level'] = current_bar['open']
-                            
-                            pause_evt = {
-                                **last_rapid['event'],
-                                'ts':            now_ts,
-                                'time_ist':      _ist_time(now_ts),
-                                'status':        'PAUSE',
-                                'entry_price':   current_bar['open'],  # open of red candle
-                                'sl_level':      current_bar['low'],   # low of red candle
-                                'sl_distance':   current_bar['open'] - current_bar['low'],
-                                'sl_pct':        round((current_bar['open'] - current_bar['low']) / current_bar['open'] if current_bar['open'] > 0 else 0.0, 4),
-                                'sl_pct_str':    f"{((current_bar['open'] - current_bar['low']) / current_bar['open'] * 100):.2f}%" if current_bar['open'] > 0 else "0.00%",
-                                '_key':          f"RAPID_PAUSE:{symbol}:{tf}:{now_ts}"
-                            }
-                            last_rapid['event'] = pause_evt
-                            self.alert_mgr.add_event(pause_evt)
 
-                # ── State Machine: Triggered ──
-                if last_rapid is not None and last_rapid['status'] == 'PAUSE' and last_rapid['event'].get('ts', 0) < now_ts:
-                    if close >= last_rapid.get('trigger_level', 999999.0):
-                        last_rapid['status'] = 'TRIGGERED'
-                        
-                        triggered_evt = {
-                            **last_rapid['event'],
-                            'ts':            now_ts,
-                            'time_ist':      _ist_time(now_ts),
-                            'status':        'TRIGGERED',
-                            '_key':          f"RAPID_TRIG:{symbol}:{tf}:{now_ts}"
-                        }
-                        last_rapid['event'] = triggered_evt
-                        self.alert_mgr.add_event(triggered_evt)
 
         # Sort and update leaderboard data
         leaderboard_rows.sort(key=lambda x: x['bar_rvol'], reverse=True)
