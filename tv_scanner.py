@@ -205,21 +205,20 @@ class TVScanner:
                 # Combine history + current bar to get full list of up to 5 bars
                 hist = list(self.bar_history[symbol][tf]) + [current_bar]
 
-                # Calculate best move pct over last N bars
+                # Calculate best move pct over last 1 or 2 bars (max 2 bars)
                 best_pct = 0.0
                 best_win = 1
-                for n in range(1, len(hist) + 1):
+                for n in range(1, min(3, len(hist) + 1)):
                     win = hist[-n:]
                     if len(win) > 0:
                         low_idx = min(range(len(win)), key=lambda idx: win[idx]['low'])
-                        high_idx = max(range(len(win)), key=lambda idx: win[idx]['high'])
-                        if low_idx <= high_idx and high_idx == len(win) - 1:
-                            ref_p = win[low_idx]['low'] if win[low_idx]['low'] > 0 else win[0]['open']
-                            if ref_p > 0:
-                                move = (win[high_idx]['high'] - win[low_idx]['low']) / ref_p * 100
-                                if move > best_pct:
-                                    best_pct = move
-                                    best_win = n
+                        ref_p = win[low_idx]['low'] if win[low_idx]['low'] > 0 else win[0]['open']
+                        if ref_p > 0:
+                            # Use live close price instead of bar high to ensure alert represents current price
+                            move = (close - win[low_idx]['low']) / ref_p * 100
+                            if move > best_pct:
+                                best_pct = move
+                                best_win = n
 
                 # Update peak momentum
                 if symbol not in self.peak_momentum:
