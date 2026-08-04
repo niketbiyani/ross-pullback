@@ -585,13 +585,21 @@ def create_app(alert_mgr: AlertManager,
     @app.route('/scanner/api/alerts')
     def api_alerts():
         data = alert_mgr.get_all()
+        
+        # Filter for today's date in IST (since scanner runs on Indian market schedule)
+        from datetime import datetime, timezone, timedelta
+        ist = datetime.now(tz=timezone(timedelta(hours=5, minutes=30)))
+        today_str = ist.strftime("%Y-%m-%d")
+        
+        today_data = [d for d in data if d.get('date_iso') == today_str]
+
         if get_peak_momentum:
             pm = get_peak_momentum()
-            for d in data:
+            for d in today_data:
                 if 'peak_mom_pct' not in d:
                     mom_ev = pm.get(d.get('symbol', ''))
                     d['peak_mom_pct'] = mom_ev['pct'] if mom_ev else 0.0
-        return jsonify(data)
+        return jsonify(today_data)
 
     @app.route('/api/rvol-leaderboard')
     @app.route('/scanner/api/rvol-leaderboard')
