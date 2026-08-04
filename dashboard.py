@@ -169,9 +169,11 @@ th.sort-on.asc::after{content:' ▲'}
 
     <!-- Bottom Section: Live Rapid Momentum Alerts -->
     <div style="height:58%; display:flex; flex-direction:column; overflow:hidden">
-      <div style="padding:6px 14px;background:#080d14;border-bottom:1px solid #1f2937;display:flex;align-items:center;flex-shrink:0">
+      <div style="padding:6px 14px;background:#080d14;border-bottom:1px solid #1f2937;display:flex;align-items:center;flex-shrink:0;gap:12px">
         <span style="color:#facc15;font-size:11px;font-weight:bold;letter-spacing:.5px;text-transform:uppercase">Live Rapid Momentum Alerts</span>
-        <span id="alert-count" style="font-size:10px;color:#4b5563;margin-left:auto">0 alerts</span>
+        <span style="font-size:10px;color:#94a3b8;margin-left:auto">Min Spike%:</span>
+        <input id="alert-min-spike" type="number" step="0.1" value="0.0" style="width:50px;background:#1e293b;border:1px solid #475569;color:#fff;border-radius:3px;padding:1px 4px;font-size:11px;text-align:right" />
+        <span id="alert-count" style="font-size:10px;color:#4b5563">0 alerts</span>
       </div>
       <div class="scroller" style="flex:1;overflow-y:auto">
         <table style="width:100%;border-collapse:collapse">
@@ -390,9 +392,15 @@ function renderRapids() {
   const tb = document.getElementById('rapid-tb');
   if (!tb) return;
   
-  const rawRows = alerts.filter(okRapid);
+  const minSpikeVal = parseFloat(document.getElementById('alert-min-spike')?.value || '0.0');
   
-  const sorted = [...rawRows].sort((a, b) => {
+  const rawRows = alerts.filter(okRapid);
+  const filteredRows = rawRows.filter(a => {
+    const pct = a.spike_pct || a.pct || 0.0;
+    return pct >= minSpikeVal;
+  });
+  
+  const sorted = [...filteredRows].sort((a, b) => {
     let va = a[alertsSortCol];
     let vb = b[alertsSortCol];
     if (alertsSortCol === 'pct') {
@@ -442,6 +450,10 @@ document.querySelectorAll('.sortable-alerts').forEach(th => {
     }
     renderRapids();
   });
+});
+
+document.getElementById('alert-min-spike').addEventListener('input', () => {
+  renderRapids();
 });
 
 function pollDashboardData() {
